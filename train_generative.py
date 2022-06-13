@@ -3,7 +3,6 @@ import json
 import argparse
 import numpy      as np
 import tensorflow as tf
-
 import midi_encoder as me
 
 # Directory where the checkpoints will be saved
