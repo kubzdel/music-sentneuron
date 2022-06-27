@@ -43,8 +43,7 @@ class MidiTrainingModule(pl.LightningModule):
             while (
                 len(output_seq) < 255 and predicted_token.unsqueeze(-1)[0] != 0
             ):
-                outputs = self.model.forward(output_seq)
-                outputs = outputs.permute(0, 2, 1)
+                outputs = self.forward(output_seq, permute=False)
                 lm_logits = outputs
                 logits = lm_logits[-1, :]
                 top_k, top_p, temperature = 0, 0.95, 1
@@ -66,8 +65,11 @@ class MidiTrainingModule(pl.LightningModule):
         return output_sentence
 
 
-    def forward(self, input_ids):
-        return self.model(input_ids)
+    def forward(self, input_ids, permute = True):
+        if permute:
+            return self.model(input_ids).permute(0, 2, 1)
+        else:
+            return self.model(input_ids)
 
     def training_step(self, batch, batch_nb):
         model_out = self.forward(batch['input_ids'])

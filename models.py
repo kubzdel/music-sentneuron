@@ -14,7 +14,7 @@ class LSTMModel(nn.Module):
     def forward(self, input):
         output, (h, c) = self.lstm_module(input)
         logits = self.linear(output)
-        x_reshaped = logits.permute(0, 2, 1)
+        # x_reshaped = logits.permute(0, 2, 1)
         return x_reshaped
 
 
@@ -46,5 +46,5 @@ class TransformerModel(nn.Module):
         hidden_states = gpt2_outputs[0]
         # equivalent of hidden_states = gpt2_outputs.last_hidden_state
         lm_logits = self.lm_head(hidden_states)
-        x_reshaped = lm_logits.permute(0, 2, 1)
-        return x_reshaped
+        return lm_logits
+
