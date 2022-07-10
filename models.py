@@ -15,26 +15,26 @@ class LSTMModel(nn.Module):
         output, (h, c) = self.lstm_module(input)
         logits = self.linear(output)
         # x_reshaped = logits.permute(0, 2, 1)
-        return x_reshaped
+        return logits
 
 
 class TransformerModel(nn.Module):
-    def __init__(self,vocab_size):
+    def __init__(self, vocab_size, seq_len, n_layer, n_head, n_embd):
         super(TransformerModel, self).__init__()
         config = GPT2Config(
             vocab_size=vocab_size,
-            n_ctx=256,
+            n_ctx=seq_len,
             bos_token_id=0,
-            n_positions=256,
-            n_layer=3,
-            n_head=3,
+            n_positions=seq_len,
+            n_layer=n_layer,
+            n_head=n_head,
             eos_token_id=0,
+            n_embd=n_embd,
             output_hidden_states=True
         )
-        self.output_units = 768  # default gpt2 embedding_size
         self.gpt2 = AutoModel.from_config(config=config)
         # language modelling head
-        self.lm_head = nn.Linear(self.output_units, vocab_size, bias=False)
+        self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
 
     def forward(self, tokens):
         """ Usual pytorch forward function.

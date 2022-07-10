@@ -1,11 +1,14 @@
+from argparse import Namespace
 from collections import OrderedDict
-import torch.nn.functional as F
+from pathlib import Path
+
 import pytorch_lightning as pl
 import torch
+import torch.nn.functional as F
 from torch.optim import AdamW
 
-from models import LSTMModel, TransformerModel
 from midi_encoder import write
+from models import TransformerModel
 from utils import top_k_top_p_filtering
 
 
@@ -15,18 +18,20 @@ class MidiTrainingModule(pl.LightningModule):
     Support Transformers as well as LSTMs.
     """
 
-    def __init__(self, batch_size, epochs, samples_count, tokenizer, embedding_size, vocab_size, lstm_layers, lstm_units) -> None:
+    def __init__(self, n_layer, n_head, n_embd, seq_len,
+                 batch_size, epochs, samples_count, tokenizer, vocab_size, training_stride, validation_stride) -> None:
         super(MidiTrainingModule, self).__init__()
         self.batch_size = batch_size
         self.epochs = epochs
         self.samples_count = samples_count
         self.tokenizer = tokenizer
-        self.embedding_size = embedding_size
         self.vocab_size = vocab_size
         # build model
         # self.model = LSTMModel(vocab_size, embedding_size, lstm_layers, lstm_units)
-        self.model = TransformerModel(vocab_size)
+        self.model = TransformerModel(n_layer=n_layer, n_head=n_head, n_embd=n_embd, seq_len=seq_len, vocab_size=vocab_size)
         self.loss = torch.nn.CrossEntropyLoss()
+        self.seq_len = seq_len
+        self.save_hyperparameters()
 
     def generate(self, step) -> dict:
         """ Predict function.
@@ -41,7 +46,7 @@ class MidiTrainingModule(pl.LightningModule):
         with torch.no_grad():
             output_seq = self.tokenizer.encode('\n', return_tensors=True)
             while (
-                len(output_seq) < 255 and predicted_token.unsqueeze(-1)[0] != 0
+                    len(output_seq) < self.seq_len-1 and predicted_token.unsqueeze(-1)[0] != 0
             ):
                 outputs = self.forward(output_seq, permute=False)
                 lm_logits = outputs
@@ -59,13 +64,19 @@ class MidiTrainingModule(pl.LightningModule):
             output_seq = output_seq[1:-1]
             output_sentence = self.tokenizer.decode(output_seq)
             print(output_sentence)
-            write(output_sentence, f'val_generated/generated_step_{str(step)}.mid')
+            Path('val_generated').mkdir(exist_ok=True)
+            midi_path = f'val_generated/generated_step_{str(step)}.mid'
+            write(output_sentence, midi_path)
+            self.logger.experiment.log_artifact(run_id=self.logger.run_id, local_path=midi_path)
         self.model.cuda()
         self.model.train()
         return output_sentence
 
+    def on_fit_start(self):
+        params = Namespace()
+        self.logger.log_hyperparams(params)
 
-    def forward(self, input_ids, permute = True):
+    def forward(self, input_ids, permute=True):
         if permute:
             return self.model(input_ids).permute(0, 2, 1)
         else:
@@ -74,7 +85,10 @@ class MidiTrainingModule(pl.LightningModule):
     def training_step(self, batch, batch_nb):
         model_out = self.forward(batch['input_ids'])
         loss = self.loss(model_out, batch['target_ids'])
+        if batch_nb % 25 == 0:
+            self.logger.log_metrics({'train_loss': loss}, step=batch_nb)
         return loss
+
     def validation_step(self, batch, batch_nb):
         """ Similar to the training step but with the model in eval mode.
         Returns:
@@ -97,6 +111,7 @@ class MidiTrainingModule(pl.LightningModule):
             # avg_val_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
             # print(self.metrics_manager.valid_results_to_string())
             self.log('val_loss', avg_loss, on_epoch=True, prog_bar=True)
+            self.logger.log_metrics({'val_loss': avg_loss}, step=self.global_step)
         self.generate(self.global_step)
 
     def configure_optimizers(self):
