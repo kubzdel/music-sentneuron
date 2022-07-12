@@ -28,7 +28,8 @@ class MidiTrainingModule(pl.LightningModule):
         self.vocab_size = vocab_size
         # build model
         # self.model = LSTMModel(vocab_size, embedding_size, lstm_layers, lstm_units)
-        self.model = TransformerModel(n_layer=n_layer, n_head=n_head, n_embd=n_embd, seq_len=seq_len, vocab_size=vocab_size)
+        self.model = TransformerModel(n_layer=n_layer, n_head=n_head, n_embd=n_embd, seq_len=seq_len,
+                                      vocab_size=vocab_size)
         self.loss = torch.nn.CrossEntropyLoss()
         self.seq_len = seq_len
         self.save_hyperparameters()
@@ -46,7 +47,7 @@ class MidiTrainingModule(pl.LightningModule):
         with torch.no_grad():
             output_seq = self.tokenizer.encode('\n', return_tensors=True)
             while (
-                    len(output_seq) < self.seq_len-1 and predicted_token.unsqueeze(-1)[0] != 0
+                    len(output_seq) < self.seq_len - 1 and predicted_token.unsqueeze(-1)[0] != 0
             ):
                 outputs = self.forward(output_seq, permute=False)
                 lm_logits = outputs
@@ -64,8 +65,8 @@ class MidiTrainingModule(pl.LightningModule):
             output_seq = output_seq[1:-1]
             output_sentence = self.tokenizer.decode(output_seq)
             print(output_sentence)
-            Path('val_generated').mkdir(exist_ok=True)
-            midi_path = f'val_generated/generated_step_{str(step)}.mid'
+            Path(f'{self.run_name}_generated_samples').mkdir(exist_ok=True)
+            midi_path = f'{self.run_name}_generated_samples/{self.run_name}_step_{str(step)}.mid'
             write(output_sentence, midi_path)
             self.logger.experiment.log_artifact(run_id=self.logger.run_id, local_path=midi_path)
         self.model.cuda()
@@ -75,6 +76,7 @@ class MidiTrainingModule(pl.LightningModule):
     def on_fit_start(self):
         params = Namespace()
         self.logger.log_hyperparams(params)
+        self.run_name = self.logger._run_name
 
     def forward(self, input_ids, permute=True):
         if permute:

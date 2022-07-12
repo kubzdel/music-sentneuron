@@ -40,7 +40,7 @@ if __name__ == "__main__":
     # Build dictionary to map from char to integers
     char2idx, vocab_size = build_char2idx(train_vocab, test_vocab)
 
-    result_path = os.path.join('', 'trained_model')
+    result_path = os.path.join('', opt.run_name)
     Path(result_path).mkdir(parents=True, exist_ok=True)
     tokenizer = MidiTokenizer(from_file='trained/char2idx.json')
     data = MusicDataModule(train_input=train_text, val_input=test_text, tokenizer=tokenizer,
