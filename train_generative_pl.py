@@ -22,9 +22,11 @@ if __name__ == "__main__":
     parser.add_argument('--run_name', type=str, required=True, help="MLFlow run name")
     parser.add_argument('--train', type=str, required=True, help="Train dataset.")
     parser.add_argument('--test', type=str, required=True, help="Test dataset.")
+    parser.add_argument('--model_type', type=str, required=True, help=" lstm / transformer")
     parser.add_argument('--model', type=str, required=False, help="Checkpoint dir.")
     parser.add_argument('--n_embd', type=int, default=256, help="Embedding size.")
     parser.add_argument('--n_head', type=int, default=512, help="Transformer heads.")
+    parser.add_argument('--n_units', type=int, default=512, help="LSTM units.")
     parser.add_argument('--n_layer', type=int, default=2, help="Layers.")
     parser.add_argument('--batch', type=int, default=64, help="Batch size.")
     parser.add_argument('--epochs', type=int, default=10, help="Epochs.")
@@ -32,6 +34,8 @@ if __name__ == "__main__":
     parser.add_argument('--training_stride', type=int, default=50, help="Stride length.")
     parser.add_argument('--validation_stride', type=int, default=50, help="Stride length.")
     opt = parser.parse_args()
+
+
 
     # Encode midi files as text with vocab
     train_text, train_vocab = me.load(opt.train)
@@ -49,9 +53,9 @@ if __name__ == "__main__":
                            num_workers=0, batch_size=opt.batch)
     data.setup()
     training_samples = len(data.train_dataset)
-    model = MidiTrainingModule(batch_size=opt.batch, epochs=opt.epochs, samples_count=training_samples,
+    model = MidiTrainingModule(model_type=opt.model_type, batch_size=opt.batch, epochs=opt.epochs, samples_count=training_samples,
                                tokenizer=tokenizer, n_embd=opt.n_embd, n_layer=opt.n_layer,
-                               n_head=opt.n_head, vocab_size=vocab_size,
+                               n_head=opt.n_head, n_units=opt.n_units, vocab_size=vocab_size,
                                seq_len=opt.seq_len, training_stride=opt.training_stride,
                                validation_stride=opt.validation_stride)
     checkpoint_callback = ModelCheckpoint(

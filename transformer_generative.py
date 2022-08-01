@@ -9,6 +9,7 @@ from torch.optim import AdamW
 
 from midi_encoder import write
 from models import TransformerModel
+from models import LSTMModel
 from utils import top_k_top_p_filtering
 
 
@@ -17,9 +18,11 @@ class MidiTrainingModule(pl.LightningModule):
     Training module with a Language Model head.
     Support Transformers as well as LSTMs.
     """
+        #self.model = LSTMModel(vocab_size=vocab_size, embedding_size, lstm_layers, lstm_units)
 
-    def __init__(self, n_layer, n_head, n_embd, seq_len,
-                 batch_size, epochs, samples_count, tokenizer, vocab_size, training_stride, validation_stride) -> None:
+    def __init__(self, model_type, n_layer, n_head, n_embd, n_units, seq_len,
+                 batch_size, epochs, samples_count, tokenizer, vocab_size, training_stride,
+                 validation_stride) -> None:
         super(MidiTrainingModule, self).__init__()
         self.batch_size = batch_size
         self.epochs = epochs
@@ -27,9 +30,11 @@ class MidiTrainingModule(pl.LightningModule):
         self.tokenizer = tokenizer
         self.vocab_size = vocab_size
         # build model
-        # self.model = LSTMModel(vocab_size, embedding_size, lstm_layers, lstm_units)
-        self.model = TransformerModel(n_layer=n_layer, n_head=n_head, n_embd=n_embd, seq_len=seq_len,
-                                      vocab_size=vocab_size)
+        if (model_type == "lstm"):
+            self.model = LSTMModel(vocab_size=vocab_size, embedding_size=n_embd, lstm_layers=n_layer, lstm_units=n_units)
+        else:
+            self.model = TransformerModel(n_layer=n_layer, n_head=n_head, n_embd=n_embd, seq_len=seq_len,
+                                          vocab_size=vocab_size)
         self.loss = torch.nn.CrossEntropyLoss()
         self.seq_len = seq_len
         self.save_hyperparameters()
