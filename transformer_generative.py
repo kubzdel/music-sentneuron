@@ -14,7 +14,7 @@ from models import TransformerModel
 from utils import top_k_top_p_filtering
 from transformers.generation_logits_process import TypicalLogitsWarper
 
-SLIDING_WINDOW_SIZE = 256
+SLIDING_WINDOW_SIZE = 512
 
 
 class MidiTrainingModule(pl.LightningModule):
@@ -64,9 +64,10 @@ class MidiTrainingModule(pl.LightningModule):
                 logits = lm_logits[-1, :]
 
                 if int(self.typical_tau) != 1:
+                    logits = logits / self.temperature
                     typical_logits_wraper = TypicalLogitsWarper(mass=self.typical_tau)
-                    lm_logits = lm_logits / self.temperature
-                    filtered_logits = typical_logits_wraper(torch.LongTensor(), lm_logits)[-1, :]
+                    filtered_logits = typical_logits_wraper(torch.LongTensor(), logits[None, :])
+                    filtered_logits = torch.squeeze(filtered_logits)
                 else:
                     filtered_logits = top_k_top_p_filtering(
                         logits, top_k=self.top_k, top_p=self.top_p, temperature=self.temperature
