@@ -14,9 +14,11 @@ from dotenv import load_dotenv
 load_dotenv()
 import onnx
 import onnxruntime
+import torch.nn.functional as F
 # use joblib library to to the exporting
 from tokenizer import MidiTokenizer
 import music21 as m21
+from utils import top_k_top_p_filtering
 
 from joblib import dump
 
@@ -114,12 +116,12 @@ def download_metadata():
 
   #print(model.data) #model.data.decode()
 
-  return "downloaded_model.onnx", tokenizer_file
+  return "downloaded_model.onnx", tokenizer_file, "downloaded_tokenizer.json"
 
 def generate_midi_file(step) -> dict:
   #wczytanie modelu z bucketa (potrzebny model i tokenizer (dane na buckecie
-  model, tokenizer_file = download_metadata()
-  tokenizer = MidiTokenizer(from_file=tokenizer_file) #'trained/char2idx.json')
+  model, tokenizer_file, tokenizer_path = download_metadata()
+  tokenizer = MidiTokenizer(from_file=tokenizer_path) #'trained/char2idx.json')
 
   # wczytanie modelu
   onnx_model = onnx.load(model)  # "downloaded_model.onnx")
@@ -140,7 +142,7 @@ def generate_midi_file(step) -> dict:
       Dictionary with the input text and the predicted label.
   """
 
-  onnx_model.eval()
+  ort_session.eval()
   onnx_model.to('cpu')
   predicted_token = torch.Tensor([1])
 
@@ -178,7 +180,7 @@ def generate_midi_file(step) -> dict:
 
 @app.get('/')
 async def root():
-  model, tokenizer = download_metadata()
+  model, tokenizer, tokenizer_path = download_metadata()
   generate_midi_file(2)
   print(model)
   print(tokenizer)
