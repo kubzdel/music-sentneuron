@@ -7,10 +7,10 @@ from dotenv import load_dotenv
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import MLFlowLogger
+from transformers import PreTrainedTokenizerFast
 
 import midi_encoder as me
 from data_module import MusicDataModule
-from tokenizer import MidiTokenizer
 from train_generative import build_char2idx
 from transformer_generative import MidiTrainingModule
 
@@ -34,21 +34,34 @@ if __name__ == "__main__":
     opt = parser.parse_args()
 
     # Encode midi files as text with vocab
-    train_text, train_vocab = me.load(opt.train)
-    test_text, test_vocab = me.load(opt.test)
+    train_text, train_vocab = me.load(opt.train, ignore=True)
+    test_text, test_vocab = me.load(opt.test, ignore=True)
 
     # Build dictionary to map from char to integers
     char2idx, vocab_size = build_char2idx(train_vocab, test_vocab)
 
     result_path = os.path.join('', opt.run_name)
     Path(result_path).mkdir(parents=True, exist_ok=True)
-    tokenizer = MidiTokenizer(from_file='trained/char2idx.json')
+    # tokenizer = MidiTokenizer(from_file='trained/char2idx.json')
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file="new_tokenizer_word_old.json")
+    tokenizer.unk_token = "<UNK>"
+    tokenizer.pad_token = "<PAD>"
+    tokenizer.bos_token = "\n"
+    tokenizer.eos_token = "\n"
+    vocab_size = len(tokenizer)
     data = MusicDataModule(train_input=train_text, val_input=test_text, tokenizer=tokenizer,
                            sequence_length=opt.seq_len, train_stride=opt.training_stride,
                            val_stride=opt.validation_stride,
-                           num_workers=0, batch_size=opt.batch)
-    data.setup()
-    training_samples = len(data.train_dataset)
+                           num_workers=8, batch_size=opt.batch)
+    # data.setup()
+    # training_samples = len(data.train_dataset)
+    training_samples = len(train_text.split('\n'))
+    # ckpt = MidiTrainingModule.load_from_checkpoint('trained_model/epoch=1-step=10571.ckpt',
+    #                                         batch_size=4,
+    #                                         epochs=2, samples_count=100, tokenizer=None,
+    #                                         embedding_size=10,
+    #                                         vocab_size=vocab_size, lstm_layers=3, lstm_units=3,
+    #                                         strict=False).model
     model = MidiTrainingModule(batch_size=opt.batch, epochs=opt.epochs, samples_count=training_samples,
                                tokenizer=tokenizer, n_embd=opt.n_embd, n_layer=opt.n_layer,
                                n_head=opt.n_head, vocab_size=vocab_size,
@@ -56,7 +69,8 @@ if __name__ == "__main__":
                                validation_stride=opt.validation_stride)
     checkpoint_callback = ModelCheckpoint(
         dirpath=result_path,
-        save_top_k=2,
+        save_top_k=5,
+        save_last=True,
         verbose=True,
         monitor="val_loss",
         every_n_epochs=1,
@@ -66,8 +80,22 @@ if __name__ == "__main__":
                               run_name=opt.run_name)
     early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=5, verbose=False, mode="min")
     load_dotenv()
-    trainer = Trainer(gpus=1, max_epochs=opt.epochs, callbacks=[early_stop_callback, checkpoint_callback],
+    trainer = Trainer(gpus=1, max_epochs=opt.epochs, callbacks=[checkpoint_callback],
                       logger=mlf_logger,
-                      log_every_n_steps=20, val_check_interval=0.2, progress_bar_refresh_rate=20, precision=16,
-                      accumulate_grad_batches=1, limit_val_batches=2000)
+                      log_every_n_steps=20, val_check_interval=0.25, progress_bar_refresh_rate=20, precision=16,
+                      accumulate_grad_batches=1)
+    # lr_finder = trainer.tuner.lr_find(model, train_dataloaders=data.train_dataloader(), val_dataloaders=data.val_dataloader(),min_lr=1e-7, max_lr=1e-2,num_training=1000)
+    #
+    # # Results can be found in
+    # print(lr_finder.results)
+    #
+    # # Plot with
+    # fig = lr_finder.plot(suggest=True)
+    # fig.show()
+    #
+    # # Pick point based on plot, or get suggestion
+    # new_lr = lr_finder.suggestion()
+    # print(new_lr)
+
+    # update hparams of the mod
     trainer.fit(model, data)

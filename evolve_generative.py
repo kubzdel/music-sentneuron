@@ -3,12 +3,12 @@ import json
 import pickle
 import argparse
 import numpy as np
-import tensorflow as tf
-
+from transformers import PreTrainedTokenizerFast
+from timeit import default_timer as timer
 from midi_generator import generate_midi
 from train_classifier import encode_sentence
 from train_classifier import get_activated_neurons
-from train_generative import build_generative_model
+from transformer_generative import MidiTrainingModule
 
 GEN_MIN = -1
 GEN_MAX =  1
@@ -73,12 +73,13 @@ def select(population, fitness_pop, mating_pool_size, ind_size, elite_rate):
 
     return mating_pool
 
-def calc_fitness(individual, gen_model, cls_model, char2idx, idx2char, layer_idx, sentiment, runs=30):
-    encoding_size = gen_model.layers[layer_idx].units
+def calc_fitness(individual, gen_model, cls_model, tokenizer, idx2char, layer_idx, sentiment, runs=40):
+    # encoding_size = gen_model.layers[layer_idx].units
+    encoding_size = gen_model.lm_head.in_features
     generated_midis = np.zeros((runs, encoding_size))
 
     # Get activated neurons
-    sentneuron_ixs = get_activated_neurons(cls_model)
+    sentneuron_ixs = get_activated_neurons(cls_model)[:15]
     assert len(individual) == len(sentneuron_ixs)
 
     # Use individual gens to override model neurons
@@ -88,17 +89,20 @@ def calc_fitness(individual, gen_model, cls_model, char2idx, idx2char, layer_idx
 
     # Generate pieces and encode them using the cell state of the generative model
     for i in range(runs):
-        midi_text = generate_midi(gen_model, char2idx, idx2char, seq_len=64, layer_idx=layer_idx, override=override)
-        generated_midis[i] = encode_sentence(gen_model, midi_text, char2idx, layer_idx)
+        midi_text = generate_midi(gen_model, tokenizer, idx2char, seq_len=128, layer_idx=layer_idx, override=override)
+        generated_midis[i] = encode_sentence(gen_model, midi_text, tokenizer, layer_idx)
+        if i == 0:
+            print(midi_text)
 
     midis_sentiment = cls_model.predict(generated_midis).clip(min=0)
     return 1.0 - np.sum(np.abs(midis_sentiment - sentiment))/runs
 
-def evaluate(population, gen_model, cls_model, char2idx, idx2char, layer_idx, sentiment):
+def evaluate(population, gen_model, cls_model, tokenizer, idx2char, layer_idx, sentiment):
     fitness = np.zeros((len(population), 1))
-
     for i in range(len(population)):
-        fitness[i] = calc_fitness(population[i], gen_model, cls_model, char2idx, idx2char, layer_idx, sentiment)
+        start = timer()
+        fitness[i] = calc_fitness(population[i], gen_model, cls_model, tokenizer, idx2char, layer_idx, sentiment)
+        print(f"Iteration time {timer() - start}s")
 
     return fitness
 
@@ -107,8 +111,9 @@ def evolve(pop_size, ind_size, mut_rate, elite_rate, epochs):
     population = np.random.uniform(GEN_MIN, GEN_MAX, (pop_size, ind_size))
 
     # Evaluate initial population
-    fitness_pop = evaluate(population, gen_model, cls_model, char2idx, idx2char, opt.cellix, opt.sent)
+    fitness_pop = evaluate(population, gen_model, cls_model, tokenizer, idx2char, opt.cellix, opt.sent)
     print("--> Fitness: \n", fitness_pop)
+    print("--> Average Fitness: \n", np.mean(fitness_pop))
 
     for i in range(epochs):
         print("-> Epoch", i)
@@ -120,8 +125,11 @@ def evolve(pop_size, ind_size, mut_rate, elite_rate, epochs):
         population = reproduce(mating_pool, pop_size, ind_size, mut_rate)
 
         # Calculate fitness of each individual of the population
-        fitness_pop = evaluate(population, gen_model, cls_model, char2idx, idx2char, opt.cellix, opt.sent)
+        fitness_pop = evaluate(population, gen_model, cls_model, tokenizer, idx2char, opt.cellix, opt.sent)
         print("--> Fitness: \n", fitness_pop)
+        print("--> Average Fitness: \n", np.mean(fitness_pop))
+        if np.any(fitness_pop > 0.95):
+            break
 
     return population, fitness_pop
 
@@ -145,26 +153,33 @@ if __name__ == "__main__":
     opt = parser.parse_args()
 
     # Load char2idx dict from json file
-    with open(opt.ch2ix) as f:
-        char2idx = json.load(f)
-
+    # with open(opt.ch2ix) as f:
+    #     char2idx = json.load(f)
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file="new_tokenizer_word_2.json")
+    vocab_size = len(tokenizer)
+    char2idx = tokenizer.vocab
     # Create idx2char from char2idx dict
-    idx2char = {idx:char for char,idx in char2idx.items()}
+    idx2char = {idx:char for char,idx in tokenizer.vocab.items()}
 
     # Calculate vocab_size from char2idx dict
-    vocab_size = len(char2idx)
+    # vocab_size = len(char2idx)
 
     # Rebuild generative model from checkpoint
-    gen_model = build_generative_model(vocab_size, opt.embed, opt.units, opt.layers, batch_size=1)
-    gen_model.load_weights(tf.train.latest_checkpoint(opt.genmodel))
-    gen_model.build(tf.TensorShape([1, None]))
-
+    # gen_model = build_generative_model(vocab_size, opt.embed, opt.units, opt.layers, batch_size=1)
+    # gen_model.load_weights(tf.train.latest_checkpoint(opt.genmodel))
+    # gen_model.build(tf.TensorShape([1, None]))
+    gen_model = MidiTrainingModule.load_from_checkpoint('gpt2_new_bins_tanh_3/last.ckpt', batch_size=4,
+                                                               epochs=2, samples_count = 100, tokenizer = None, embedding_size = 768,
+                                                               vocab_size = vocab_size, lstm_layers = 3, lstm_units = 3, strict=False,
+                                                               n_layer=4, n_head = 4, n_embd = 768, seq_len=512, training_stride=512, validation_stride=512).model
+    gen_model.eval()
+    gen_model.to('cuda')
     # Load classifier model
     with open(opt.clsmodel, "rb") as f:
         cls_model = pickle.load(f)
 
     # Set individual size to the number of activated neurons
-    sentneuron_ixs = get_activated_neurons(cls_model)
+    sentneuron_ixs = get_activated_neurons(cls_model)[:15]
     ind_size = len(sentneuron_ixs)
 
     population, fitness_pop = evolve(opt.popsize, ind_size, opt.mrate, opt.elitism, opt.epochs)

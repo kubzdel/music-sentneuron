@@ -1,29 +1,89 @@
 import argparse
+import copy
 import math as ma
 import os
+import uuid
+from collections import Counter
 from multiprocessing import Process
 
+import mido
+from miditok.utils import merge_tracks
+from mido import MidiFile as MidoFile, MidiTrack
+from miditok import REMI, get_midi_programs, MuMIDI, Octuple
+from miditoolkit import MidiFile
 import music21 as m21
+import music21.duration
 import numpy as np
 
+from blacklist import blacklist, blacklist_clean, blacklist_old
+
+whitelist = []
 THREE_DOTTED_BREVE = 15
 THREE_DOTTED_32ND  = 0.21875
 
 MIN_VELOCITY = 0
-MAX_VELOCITY = 128
+MAX_VELOCITY = 160
 
 MIN_TEMPO = 24
-MAX_TEMPO = 160
+MAX_TEMPO = 200
 
 MAX_PITCH = 128
 
+FREQ = 16
 
+def remi_multiprocessing_encode(datapath, tokenizer, transpose_range, n_process):
+    batched_data = [os.listdir(datapath)[i:i + n_process] for i in range(0, len(os.listdir(datapath)), n_process)]
+
+    for i, batch in enumerate(batched_data):
+            threads = []
+            for file in batch:
+                file_path = os.path.join(datapath, file)
+                file_extension = os.path.splitext(file_path)[1]
+                if os.path.isfile(file_path) and (file_extension == ".midi" or file_extension == ".mid") and ('decoded' not in file_path):
+                    thread = Process(target=remi_encode, args=(file_path, tokenizer, transpose_range))
+                    threads.append(thread)
+                    thread.start()
+            [t.join() for t in threads]
+
+def remi_encode(file_path, tokenizer, transpose_range=0):
+    print(f"Processing {file_path}")
+    midi = MidiFile(file_path)
+    # midi2 = MidiFile(file_path)
+    # if len(midi.instruments) > 1:
+    #     for i in range(1, len(midi.instruments)):
+    #         midi.instruments[0].notes.extend(midi.instruments[i].notes)
+    #     midi.instruments = midi.instruments[:1]
+    merged_track = merge_tracks(midi, effects=False)
+    midi.instruments = [merged_track]
+
+    # Converts MIDI to tokens, and back to a MIDI
+    raw_tokens = tokenizer.midi_to_tokens(midi)
+    converted_back_midi = tokenizer.tokens_to_midi(raw_tokens, get_midi_programs(midi))
+    file_folder = file_path.split('/')[:-1]
+    file_name = file_path.split('/')[-1]
+    decoded_path = os.path.join(*file_folder, file_name.split('.mid')[0] + '_decoded.mid')
+    converted_back_midi.dump(decoded_path)
+
+    versions = []
+
+    for trans_value in range(int(-transpose_range / 2), int(transpose_range/2) + 1):
+        tmp = copy.deepcopy(midi)
+        for note in tmp.instruments[0].notes:
+            note.pitch += trans_value
+        version_int = [tokenizer.vocab.event_to_token['SOS_None']] + tokenizer.midi_to_tokens(tmp)[0] + [tokenizer.vocab.event_to_token['EOS_None']]
+        # version_str = tokenizer.tokens_to_events(version_int)
+        version_str = [str(t) for t in version_int]
+        versions.append(version_str)
+    with open(os.path.join(*file_folder, file_name.split('.mid')[0] + '.txt'), mode='w') as token_file:
+        versions = [' '.join(v) for v in versions]
+        output_txt = "\n".join(versions)
+        token_file.write(output_txt)
 def process(file_path, file_extension, sample_freq, piano_range, transpose_range, stretching_range):
     if os.path.isfile(file_path) and (file_extension == ".midi" or file_extension == ".mid"):
         parse_midi(file_path, sample_freq, piano_range, transpose_range, stretching_range)
 
 
-def multiprocessing_encode(datapath, n_process, sample_freq=4, piano_range=(33, 93), transpose_range=10, stretching_range=10):
+def multiprocessing_encode(datapath, n_process, sample_freq=FREQ, piano_range=(33, 93), transpose_range=10, stretching_range=10):
     if os.path.isfile(datapath):
         # Path is an individual midi file
         file_extension = os.path.splitext(datapath)[1]
@@ -45,7 +105,7 @@ def multiprocessing_encode(datapath, n_process, sample_freq=4, piano_range=(33, 
                 thread.start()
             [t.join() for t in threads]
 
-def load(datapath, sample_freq=4, piano_range=(33, 93), transpose_range=10, stretching_range=10):
+def load(datapath, sample_freq=FREQ, piano_range=(33, 93), transpose_range=10, stretching_range=10, ignore = False):
     text = ""
     vocab = set()
 
@@ -54,7 +114,7 @@ def load(datapath, sample_freq=4, piano_range=(33, 93), transpose_range=10, stre
         file_extension = os.path.splitext(datapath)[1]
 
         if file_extension == ".midi" or file_extension == ".mid":
-            text = parse_midi(datapath, sample_freq, piano_range, transpose_range, stretching_range)
+            text = parse_midi(datapath, sample_freq, piano_range, transpose_range, stretching_range, ignore)
             vocab = set(text.split(" "))
     else:
         # Read every file in the given directory
@@ -64,7 +124,7 @@ def load(datapath, sample_freq=4, piano_range=(33, 93), transpose_range=10, stre
 
             # Check if it is not a directory and if it has either .midi or .mid extentions
             if os.path.isfile(file_path) and (file_extension == ".midi" or file_extension == ".mid"):
-                encoded_midi = parse_midi(file_path, sample_freq, piano_range, transpose_range, stretching_range)
+                encoded_midi = parse_midi(file_path, sample_freq, piano_range, transpose_range, stretching_range, ignore)
 
                 if len(encoded_midi) > 0:
                     words = set(encoded_midi.split(" "))
@@ -78,7 +138,7 @@ def load(datapath, sample_freq=4, piano_range=(33, 93), transpose_range=10, stre
     return text, vocab
 
 
-def parse_midi(file_path, sample_freq, piano_range, transpose_range, stretching_range):
+def parse_midi(file_path, sample_freq, piano_range, transpose_range, stretching_range,ignore = False):
     print("Parsing midi file:", file_path)
 
     # Split datapath into dir and filename
@@ -91,28 +151,70 @@ def parse_midi(file_path, sample_freq, piano_range, transpose_range, stretching_
     if (os.path.isfile(midi_txt_name)):
         midi_fp = open(midi_txt_name, "r")
         encoded_midi = midi_fp.read()
+        midi_fp.close()
     else:
+        if ignore:
+            return ""
+        random_name = uuid.uuid4().hex + ".mid"
+        random_path = os.path.join(*file_path.split('/')[:-1], random_name)
+        m = mido.MidiFile(file_path)
+        new_merged_tracks = []
+        for track in m.tracks:
+            for i in range(len(track)):
+                if not track[i].is_meta:
+                    track[i].channel = 0
+        merged_tracks = mido.merge_tracks(m.tracks)
+
+        mido_empty = MidoFile(type=0)
+        mido_empty.tracks.append(merged_tracks)
+        mm = merged_tracks[0]
+        mido_empty.ticks_per_beat = m.ticks_per_beat
+
+        mido_empty.save(random_path)
         # Create a music21 stream and open the midi file
         midi = m21.midi.MidiFile()
-        midi.open(file_path)
+        midi.open(random_path)
         midi.read()
         midi.close()
 
+        m = m21.converter.parse(random_path)
+        fp = m.write('midi', fp='pathToWhereYouWantToWriteIt.mid')
+        # Creates the tokenizer and loads a MIDI
+        pitch_range = range(21, 109)
+        beat_res = {(0, 4): 8, (4, 12): 16}
+        nb_velocities = 32
+        additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False,
+                             'rest_range': (2, 8),  # (half, 8 beats)
+                             'nb_tempos': 32,  # nb of tempo bins
+                             'tempo_range': (40, 250)}  # (min, max)
+        tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, mask=False)
+
+        midi = MidiFile(file_path)
+        # midi2 = MidiFile(file_path)
+        midi.instruments[1].notes.extend(midi.instruments[0].notes)
+        midi.instruments = midi.instruments[1:]
+
+
+        # Converts MIDI to tokens, and back to a MIDI
+        tokens = tokenizer.midi_to_tokens(midi)
+        converted_back_midi = tokenizer.tokens_to_midi(tokens, get_midi_programs(midi))
+        converted_back_midi.dump('merged4.mid')
         # Translate midi to stream of notes and chords
         encoded_midi = midi2encoding(midi, sample_freq, piano_range, transpose_range, stretching_range)
-
+        os.remove(random_path)
         if len(encoded_midi) > 0:
             midi_fp = open(midi_txt_name, "w+")
             midi_fp.write(encoded_midi)
             midi_fp.flush()
-
-    midi_fp.close()
+            midi_fp.close()
     return encoded_midi
 
 
 def midi2encoding(midi, sample_freq, piano_range, transpose_range, stretching_range):
     try:
+        # midi.tracks = midi.tracks[1:]
         midi_stream = m21.midi.translate.midiFileToStream(midi)
+
     except:
         return []
 
@@ -122,7 +224,9 @@ def midi2encoding(midi, sample_freq, piano_range, transpose_range, stretching_ra
     # Get encoded midi from piano roll
     encoded_midi = list(piano_roll2encoding(piano_roll))
 
-    # write(encoded_midi[0],'resuljt.mid')
+    # if encoded_midi:
+    #     d = len(Counter(encoded_midi[0].split()))
+    #     write(encoded_midi[0],'resuljt.mid')
 
     return " ".join(encoded_midi)
 
@@ -166,13 +270,18 @@ def piano_roll2encoding(piano_roll):
             # End of time step
             if len(version_encoding) > 0 and version_encoding[-1][0] == "w":
                 # Increase wait by one
+                # if int(version_encoding[-1].split("_")[1]) > 128:
+                #     return ""
                 version_encoding[-1] = "w_" + str(int(version_encoding[-1].split("_")[1]) + 1)
             else:
                 version_encoding.append("w_1")
 
         # End of piece
+        if version_encoding[-1] != 'w_64' or  version_encoding[-1] != 'w_128':
+            version_encoding = version_encoding[:-1]
         version_encoding.append("\n")
-
+        # if any(token in blacklist_old for token in version_encoding):
+        #     return ""
         # Check if this version of the MIDI is already added
         version_encoding_str = " ".join(version_encoding)
         if version_encoding_str not in final_encoding:
@@ -188,10 +297,10 @@ def write(encoded_midi, path):
     midi = encoding2midi(encoded_midi)
     midi.open(path, "wb")
     midi.write()
-    midi.close()
+    return midi
 
 
-def encoding2midi(note_encoding, ts_duration=0.25):
+def encoding2midi(note_encoding, ts_duration=1/FREQ):
     notes = []
 
     velocity = 100
@@ -242,24 +351,75 @@ def encoding2midi(note_encoding, ts_duration=0.25):
 def midi_parse_notes(midi_stream, sample_freq):
     note_events = []
     note_filter = m21.stream.filters.ClassFilter('Note')
-
+    i = 0
+    base_quarter_length = midi_stream.parts[0].quarterLength
+    measure_offsets = []
+    parts = []
+    always_use_measure_offset = False
     for part in midi_stream.parts:
+        parts.append(part)
+    if len(parts) > 2:
+        print(123)
+    parts = sorted(parts, key=lambda row: row.highestTime, reverse=False)
+    if len(parts) > 1:
+        if abs(parts[0].highestTime - parts[1].highestTime) > 40:
+            for measure in parts[0].measures(0, None):
+                measure_offsets.append(measure.offset)
+        if len(parts[0].measures(0, None)) == len(parts[1].measures(0, None)):
+            always_use_measure_offset = True
+    for part in midi_stream.parts:
+        for sm in part.semiFlat:
+            print(123)
+        part.duration.quarterLength = base_quarter_length
+        scale = base_quarter_length / part.quarterLength
+        if part.offset > 0:
+            print("Greater than 0")
+        n_mes = 0
+        last_measure_offset = part.measures(0, None)[0].offset
+        base_measure_offset = part.measures(0, None)[1].offset - part.measures(0, None)[0].offset
         for measure in part.measures(0, None):
             for note in measure.recurse().addFilter(note_filter):
                 pitch = note.pitch.midi
                 duration = note.duration.quarterLength
                 velocity = note.volume.velocity
-                offset = int((measure.offset + note.offset) * sample_freq)
+                if always_use_measure_offset:
+                    offset = int((part.offset + measure_offsets[n_mes] + note.offset) * sample_freq)
+                else:
+                    if abs(measure.offset - last_measure_offset) > base_measure_offset * 2:
+                        if measure_offsets:
+                            offset = int((part.offset + measure_offsets[n_mes]+ note.offset) * sample_freq)
+                        else:
+                            return []
+                    else:
+                        offset = int((part.offset + measure.offset + note.offset) * sample_freq)
                 note_events.append((pitch, duration, velocity, int(offset)))
-
+                i+=1
+            n_mes+=1
+            last_measure_offset = measure.offset
     return note_events
 
 
 def midi_parse_chords(midi_stream, sample_freq):
     chord_filter = m21.stream.filters.ClassFilter('Chord')
     note_events = []
+    base_quarter_length = midi_stream.parts[0].quarterLength
+    parts = []
+    measure_offsets = []
     for part in midi_stream.parts:
-
+        parts.append(part)
+    always_use_measure_offset= False
+    parts = sorted(parts, key=lambda row: row.highestTime, reverse=False)
+    if len(parts) > 1:
+        if abs(parts[0].highestTime - parts[1].highestTime) > 40:
+            for measure in parts[0].measures(0, None):
+                measure_offsets.append(measure.offset)
+        if len(parts[0].measures(0, None)) == len(parts[1].measures(0, None)):
+            always_use_measure_offset = True
+    for part in midi_stream.parts:
+        scale = base_quarter_length / part.quarterLength
+        n_mes = 0
+        last_measure_offset = part.measures(0, None)[0].offset
+        base_measure_offset = part.measures(0, None)[1].offset - part.measures(0, None)[0].offset
         for measure in part.measures(0, None):
             for chord in measure.recurse().addFilter(chord_filter):
                 pitches_in_chord = chord.pitches
@@ -267,9 +427,19 @@ def midi_parse_chords(midi_stream, sample_freq):
                     pitch = pitch.midi
                     duration = chord.duration.quarterLength
                     velocity = chord.volume.velocity
-                    offset = int((measure.offset + chord.offset) * sample_freq)
+                    if always_use_measure_offset:
+                        offset = int((part.offset + measure_offsets[n_mes] + chord.offset) * sample_freq)
+                    else:
+                        if abs(measure.offset - last_measure_offset) > base_measure_offset * 2:
+                            if measure_offsets:
+                                offset = int((part.offset + measure_offsets[n_mes] + chord.offset) * sample_freq)
+                            else:
+                                return []
+                        else:
+                            offset = int((part.offset + measure.offset + chord.offset) * sample_freq)
                     note_events.append((pitch, duration, velocity, int(offset)))
-
+            n_mes+=1
+            last_measure_offset = measure.offset
     return note_events
 
 
@@ -277,11 +447,14 @@ def midi_parse_metronome(midi_stream, sample_freq):
     metronome_filter = m21.stream.filters.ClassFilter('MetronomeMark')
 
     time_events = []
-    for metro in midi_stream.recurse().addFilter(metronome_filter):
-        time = int(metro.number)
-        offset = ma.floor(metro.offset * sample_freq)
-        time_events.append((time, offset))
-
+    for part in midi_stream.parts:
+        for measure in part.measures(0, None):
+            for metro in measure.recurse().addFilter(metronome_filter):
+                time = int(metro.number)
+                offset = ma.floor((part.offset + measure.offset + metro.offset) * sample_freq)
+                time_events.append((time, offset))
+    time_events = list(set(time_events))
+    time_events = sorted(time_events, key=lambda tup: tup[1])
     return time_events
 
 
@@ -304,6 +477,10 @@ def midi2piano_roll(midi_stream, sample_freq, piano_range, transpose_range, stre
     time_streches = strech_time(time_events, stretching_range)
     # 4th index nin tuple is time offset
     # we add 128 just in case
+    # remove 128 after processing
+    if not transpositions[0]:
+        print("Cant process")
+        return []
     max_timestep = max(tupl[3] for tupl in transpositions[0]) + 128
 
     return notes2piano_roll(transpositions, time_streches, max_timestep, piano_range)
@@ -328,11 +505,12 @@ def notes2piano_roll(transpositions, time_streches, time_steps, piano_range):
                 pitch = clamp_pitch(pitch, max_pitch, min_pitch)
 
                 piano_roll[offset, pitch][0] = clamp_duration(duration)
-                piano_roll[offset, pitch][1] = discretize_value(velocity, bins=32, range=(MIN_VELOCITY, MAX_VELOCITY))
+                piano_roll[offset, pitch][1] = discretize_value(velocity, bins=40, range=(MIN_VELOCITY, MAX_VELOCITY))
 
             for time_event in time_streches[s_ix]:
-                time, offset = time_event
-                piano_roll[offset, -1][0] = discretize_value(time, bins=100, range=(MIN_TEMPO, MAX_TEMPO))
+                    time, offset = time_event
+                    if offset < piano_roll.shape[0]:
+                        piano_roll[offset, -1][0] = discretize_value(time, bins=40, range=(MIN_TEMPO, MAX_TEMPO))
 
             performances.append(piano_roll)
 
@@ -420,7 +598,20 @@ if __name__ == "__main__":
     opt = parser.parse_args()
 
     # Load data and encoded it
-    multiprocessing_encode(opt.path, n_process=4, transpose_range=opt.transp, stretching_range=opt.strech)
+    # multiprocessing_encode(opt.path, n_process=150, transpose_range=opt.transp, stretching_range=opt.strech)
+    # load(opt.path, transpose_range=opt.transp, stretching_range=opt.strech)
+    # multiprocessing_encode("vgmidi/unlabelled/test/Final_Fantasy_7_LurkingInTheDarkness.mid", n_process=1, transpose_range=opt.transp, stretching_range=opt.strech)
+    pitch_range = range(21, 110)
+    beat_res ={(0, 4): 8, (4, 12): 4}
+    nb_velocities = 32
+    additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False, 'Bar':False,
+                         'rest_range': (2, 8),  # (half, 8 beats)
+                         'nb_tempos': 32,
+                         'tempo_range': (30, 200)}  # (min, max)
+    sos_eos_tokens = ['SOS']
+    remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens = True, mask=False)
+    # remi_encode("vgmidi/unlabelled/test/Final_Fantasy_7_LurkingInTheDarkness.mid", tokenizer=remi_tokenizer, transpose_range=10)
+    remi_multiprocessing_encode(opt.path, tokenizer=remi_tokenizer, transpose_range=opt.transp, n_process=100)
     # print(text)
     #
     # # Write all data to midi file

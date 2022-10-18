@@ -2,12 +2,10 @@ import os
 import json
 import argparse
 import numpy      as np
-import tensorflow as tf
 import midi_encoder as me
-
+# import tensorflow as tf
 # Directory where the checkpoints will be saved
 TRAIN_DIR = "./trained"
-
 def generative_loss(labels, logits):
     return tf.keras.losses.sparse_categorical_crossentropy(labels, logits, from_logits=True)
 
@@ -35,7 +33,7 @@ def build_char2idx(train_vocab, test_vocab):
     char2idx = { char:i for i,char in enumerate(vocab) }
 
     # Save char2idx encoding as a json file for generate midi later
-    with open(os.path.join(TRAIN_DIR, "char2idx.json"), "w") as f:
+    with open(os.path.join(TRAIN_DIR, "char2idx_sturm.json"), "w") as f:
         json.dump(char2idx, f)
 
     return char2idx, vocab_size
@@ -90,6 +88,8 @@ if __name__ == "__main__":
 
     # Build dictionary to map from char to integers
     char2idx, vocab_size = build_char2idx(train_vocab, test_vocab)
+    with open('ferrieira_tokenizer.json') as file:
+        char2idx = json.load(file)
 
     # Build dataset from encoded unlabelled midis
     train_dataset = build_dataset(train_text, char2idx, opt.seqlen, opt.batch)
