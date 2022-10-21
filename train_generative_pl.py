@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytorch_lightning
 from dotenv import load_dotenv
+from miditok import REMI
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import MLFlowLogger
@@ -43,27 +44,38 @@ if __name__ == "__main__":
     result_path = os.path.join('', opt.run_name)
     Path(result_path).mkdir(parents=True, exist_ok=True)
     # tokenizer = MidiTokenizer(from_file='trained/char2idx.json')
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file="new_tokenizer_word_old.json")
-    tokenizer.unk_token = "<UNK>"
-    tokenizer.pad_token = "<PAD>"
-    tokenizer.bos_token = "\n"
-    tokenizer.eos_token = "\n"
-    vocab_size = len(tokenizer)
-    data = MusicDataModule(train_input=train_text, val_input=test_text, tokenizer=tokenizer,
-                           sequence_length=opt.seq_len, train_stride=opt.training_stride,
-                           val_stride=opt.validation_stride,
-                           num_workers=8, batch_size=opt.batch)
-    # data.setup()
-    # training_samples = len(data.train_dataset)
-    training_samples = len(train_text.split('\n'))
+    # tokenizer = PreTrainedTokenizerFast(tokenizer_file="new_tokenizer_word_old.json")
+    # tokenizer.unk_token = "<UNK>"
+    # tokenizer.pad_token = "<PAD>"
+    # tokenizer.bos_token = "\n"
+    # tokenizer.eos_token = "\n"
+    # vocab_size = len(tokenizer)
+    # training_samples = len(train_text.split('\n'))
     # ckpt = MidiTrainingModule.load_from_checkpoint('trained_model/epoch=1-step=10571.ckpt',
     #                                         batch_size=4,
     #                                         epochs=2, samples_count=100, tokenizer=None,
     #                                         embedding_size=10,
     #                                         vocab_size=vocab_size, lstm_layers=3, lstm_units=3,
     #                                         strict=False).model
+    pitch_range = range(21, 110)
+    beat_res ={(0, 4): 8, (4, 12): 4}
+    nb_velocities = 32
+    additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False, 'Bar':False,
+                         'rest_range': (2, 8),  # (half, 8 beats)
+                         'nb_tempos': 32,
+                         'tempo_range': (30, 200)}  # (min, max)
+    sos_eos_tokens = ['SOS']
+    remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens = True, mask=False)
+    vocab_size = len(remi_tokenizer)
+    data = MusicDataModule(train_input=train_text, val_input=test_text, tokenizer=remi_tokenizer,
+                           sequence_length=opt.seq_len, train_stride=opt.training_stride,
+                           val_stride=opt.validation_stride,
+                           num_workers=8, batch_size=opt.batch)
+    data.setup()
+    training_samples = len(data.train_dataset)
+
     model = MidiTrainingModule(batch_size=opt.batch, epochs=opt.epochs, samples_count=training_samples,
-                               tokenizer=tokenizer, n_embd=opt.n_embd, n_layer=opt.n_layer,
+                               tokenizer=remi_tokenizer, n_embd=opt.n_embd, n_layer=opt.n_layer,
                                n_head=opt.n_head, vocab_size=vocab_size,
                                seq_len=opt.seq_len, training_stride=opt.training_stride,
                                validation_stride=opt.validation_stride)

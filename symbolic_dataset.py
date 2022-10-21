@@ -39,6 +39,39 @@ class SymbolicDataset(Dataset):
     def __getitem__(self, idx):
         return {'input_ids': self.x_input[idx], 'target_ids': self.y_input[idx].type(torch.LongTensor)}
 
+class RemiDatasetTruncate(Dataset):
+    def __init__(self, symbolic_text, tokenizer, sequence_length=256, stride=100):
+        self.tokenizer = tokenizer
+        self.stride = stride
+        self.sequence_length = sequence_length
+        self.x_input, self.y_input = self.build_dataset(symbolic_text)
+
+    def pytorch_rolling_window(self, x, window_size, step_size=1):
+        # unfold dimension to make our rolling window
+        return x.unfold(0, window_size, step_size)
+
+    def encode_single_piece(self, t):
+        piece = t.strip().split()
+        piece.append('\n')
+        piece.insert(0, '\n')
+        max_len = max(len(piece), self.sequence_length)
+        tokenized_chunk = self.tokenizer.encode_plus(piece[:max_len], max_length=self.sequence_length, padding='max_length',
+                                                    is_split_into_words=True,
+                                                    truncation=True, return_attention_mask=True)
+        return tokenized_chunk
+    def build_dataset(self, text):
+        texts = [[int(s) for s in version.split(' ')] for version in text.split('\n')]
+        text_as_int = np.array(list(itertools.chain.from_iterable(texts)))
+        x_tensor = self.pytorch_rolling_window(torch.from_numpy(text_as_int[:-1]), self.sequence_length, self.stride)
+        y_tensor = self.pytorch_rolling_window(torch.from_numpy(text_as_int[1:]), self.sequence_length, self.stride)
+        return x_tensor, y_tensor
+
+    def __len__(self):
+        return self.x_input.shape[0]
+
+    def __getitem__(self, idx):
+        return {'input_ids': self.x_input[idx], 'target_ids': self.y_input[idx].type(torch.LongTensor)}
+
 class SymbolicDatasetTruncate(Dataset):
     def __init__(self, symbolic_text, tokenizer, sequence_length=256, stride=100):
         self.tokenizer = tokenizer
@@ -109,18 +142,28 @@ class ClassificationDataset(Dataset):
 
                 # Load midi file as text
                 text, vocab = me.load(phrase_path, transpose_range=1, stretching_range=1)
+                ids = [int(s) for s in text.split()]
+                if len(ids) > seq_len:
+                    print(123)
+                    ids = ids[:seq_len]
+                    attention_mask = [1 for _ in range(seq_len)]
+                else:
+                    attention_mask = [1 for _ in range(len(ids))]
+                    while len(ids) < seq_len:
+                        ids.append(0)
+                        attention_mask.append(0)
 
                 # Encode midi text using generative lstm
-                tokenized_text = self.tokenizer.encode_plus(
-                '\n ' + text,
-                max_length=seq_len,
-                add_special_tokens=False,  # Add '[CLS]' and '[SEP]'
-                return_token_type_ids=False,
-                padding='max_length',
-                truncation=True,
-                return_attention_mask=True,
-                return_tensors='pt',  # Return PyTorch tensors
-            )
+            #     tokenized_text = self.tokenizer.encode_plus(
+            #     '\n ' + text,
+            #     max_length=seq_len,
+            #     add_special_tokens=False,  # Add '[CLS]' and '[SEP]'
+            #     return_token_type_ids=False,
+            #     padding='max_length',
+            #     truncation=True,
+            #     return_attention_mask=True,
+            #     return_tensors='pt',  # Return PyTorch tensors
+            # )
                 # Save encoding in file to make it faster to load next time
                 # np.save(encoded_path, encoding)
             except Exception as E:
@@ -130,14 +173,14 @@ class ClassificationDataset(Dataset):
                 encoded_label = [1,0]
             else:
                 encoded_label = [0,1]
-            tks = self.tokenizer.encode('\n ' + text)
-            for t in tks:
-                if label == -1:
-                    neg_counter[t] +=1
-                else:
-                    pos_counter[t] +=1
+            # tks = self.tokenizer.encode('\n ' + text)
+            # for t in tks:
+            #     if label == -1:
+            #         neg_counter[t] +=1
+            #     else:
+            #         pos_counter[t] +=1
 
-            self.xs.append(tokenized_text.data)
+            self.xs.append({"input_ids": torch.tensor(ids), "attention_mask": torch.tensor(attention_mask)})
             self.ys.append(torch.tensor(encoded_label))
 
     def __len__(self):

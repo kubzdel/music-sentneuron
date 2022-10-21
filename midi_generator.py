@@ -4,9 +4,11 @@ import os
 
 import numpy as np
 import torch.nn.functional as F
+from miditok import REMI
 from transformers import PreTrainedTokenizerFast, TypicalLogitsWarper, RepetitionPenaltyLogitsProcessor, \
     TopKLogitsWarper, TopPLogitsWarper
 
+from sentiment_controllers import TempoController
 from transformer_classifier import MidiClassificationModule
 from transformer_generative import MidiTrainingModule
 import midi_encoder as me
@@ -50,7 +52,7 @@ def process_init_text(model, init_text, tokenizer, layer_idx, override):
         # Run a forward pass
         try:
             # input_eval = torch.([char2idx[c]], 0)
-            input_eval = torch.unsqueeze(torch.tensor([tokenizer.vocab[c]]), 0)
+            input_eval = torch.unsqueeze(torch.tensor([tokenizer[c]]), 0)
 
             # override sentiment neurons
             # override_neurons(model, layer_idx, override)
@@ -124,29 +126,29 @@ def generate_midi(model, tokenizer, idx2char, init_text="", seq_len=256, k=5, la
 
     return init_text + " " + " ".join(midi_generated)
 
-def generate_midi_with_sentiment(model, classifier, sentiment, tokenizer, idx2char, init_text="", seq_len=256, k=3, beam_size=4):
+def generate_midi_with_sentiment(model, classifier, sentiment, tokenizer, idx2char, init_text="", seq_len=256, k=3, sent_controllers=[], beam_size=4):
     # Add front and end pad to the initial text
-    init_text = preprocess_sentence(init_text)
+    # init_text = preprocess_sentence(init_text)
 
     # Empty midi to store our results
     midi_generated = []
 
     # Process initial text
     layer_idx = 5
-    predictions = process_init_text(model, init_text, tokenizer, layer_idx, override)
-    chunk_size = 90
+    # predictions = process_init_text(model, init_text, tokenizer, layer_idx, override)
+    chunk_size = 250
     # Here batch size == 1
     # model.reset_states()
     beams = [[] for i in range(beam_size)]
     wrap1 = TopPLogitsWarper(top_p=0.95)
     wrap2 = TopKLogitsWarper(top_k=30)
-    typical_logits_wraper = TypicalLogitsWarper(mass=0.8)
+    typical_logits_wraper = TypicalLogitsWarper(mass=0.7)
     logits_penalty = RepetitionPenaltyLogitsProcessor(penalty=1.2)
     # beams = np.empty((beam_size, 1), dtype=np.int32)
     # start_seq = tokenizer.encode("\n", return_tensors='pt').to('cuda')
-    start_seq = tokenizer.encode("\n")
+    start_seq = [2]
     # model.to('cuda')
-    while(len(beams[0])) < 512:
+    while(len(beams[0])) < 1024:
         beams_prob = [1 for i in range(beam_size)]
         for beam in range(beam_size):
             beams[beam] = start_seq.copy()
@@ -166,11 +168,13 @@ def generate_midi_with_sentiment(model, classifier, sentiment, tokenizer, idx2ch
                         predictions = np.expand_dims(predictions, 0)
                     # Sample using a categorical distribution over the top k midi chars
                     # predicted_id = sample_next(predictions, k)
-                    logits_given_prev = torch.from_numpy(predictions / 1.2)
+                    logits_given_prev = torch.from_numpy(predictions / 1.3)
+                    for s_controller in sent_controllers:
+                        logits_given_prev = s_controller.apply(logits_given_prev)
                     # filtered_logits = wrap1(input_eval, logits_given_prev)
                     # filtered_logits = wrap2(input_eval, filtered_logits)
                     filtered_logits = typical_logits_wraper(input_eval, logits_given_prev)
-                    # filtered_logits = logits_penalty(input_eval, filtered_logits)
+                    filtered_logits = logits_penalty(input_eval, filtered_logits)
                     log_prob_char_given_prev = F.softmax(filtered_logits[-1, :], dim=-1).detach().cpu()
                     predicted_id = torch.multinomial(log_prob_char_given_prev, 1).item()
                     predicted_prob = log_prob_char_given_prev[predicted_id].item()
@@ -193,7 +197,7 @@ def generate_midi_with_sentiment(model, classifier, sentiment, tokenizer, idx2ch
                     # for id in predicted_id:
                     #     midi_generated.append(idx2char[id])
                     midi_generated.append(idx2char[predicted_id])
-                    if len(beams[beam]) >= 512:
+                    if len(beams[beam]) >= 1024:
                         break
         stacked_classifications = []
         # beam_output = model.gpt2.generate(
@@ -206,25 +210,29 @@ def generate_midi_with_sentiment(model, classifier, sentiment, tokenizer, idx2ch
         #     early_stopping=True
         # ).cpu().detach().numpy()
         for beam in range(beam_size):
-            beam_txt = ' '.join(idx2char[w] for w in beams[beam][-chunk_size:])
-            classification_input = tokenizer.encode_plus(
-                beam_txt,
-                max_length=512,
-                add_special_tokens=False,  # Add '[CLS]' and '[SEP]'
-                return_token_type_ids=False,
-                padding='max_length',
-                truncation=True,
-                return_attention_mask=True,
-                return_tensors='pt',  # Return PyTorch tensors
-            ).data
+            # beam_txt = ' '.join(idx2char[w] for w in beams[beam][-chunk_size:])
+            # ids = [int(s) for s in beam_txt.split()]
+            ids = beams[beam][-chunk_size:]
+            if ids[-1] != 3:
+                ids.append(3)
+            if len(ids) > seq_len:
+                print(123)
+                ids = ids[:seq_len]
+                attention_mask = [1 for _ in range(seq_len)]
+            else:
+                attention_mask = [1 for _ in range(len(ids))]
+                while len(ids) < seq_len:
+                    ids.append(0)
+                    attention_mask.append(0)
+            classification_input = {"input_ids": torch.unsqueeze(torch.tensor(ids),0), "attention_mask": torch.unsqueeze(torch.tensor(attention_mask),0)}
             classification_output = F.softmax(classification_model(classification_input)).detach().cpu().numpy()[0]
             stacked_classifications.append(classification_output)
         stacked_classifications = np.array(stacked_classifications)
-        stacked_classifications_ids = np.where(stacked_classifications[:, sentiment] > 0.60)[0]
-        filtered_proba = [beams_prob[i] if i in stacked_classifications_ids else 0 for i in range(beam_size)]
-        max_item = max(filtered_proba)
-        # k = np.argmax(stacked_classifications[:, sentiment], axis=0)
-        k = filtered_proba.index(max_item)
+        # stacked_classifications_ids = np.where(stacked_classifications[:, sentiment] > 0.80)[0]
+        # filtered_proba = [beams_prob[i] if i in stacked_classifications_ids else 0 for i in range(beam_size)]
+        # max_item = max(filtered_proba)
+        k = np.argmax(stacked_classifications[:, sentiment], axis=0)
+        # k = filtered_proba.index(max_item)
         start_seq = beams[k]
     # predicted_token = torch.Tensor([1])
     # with torch.no_grad():
@@ -252,8 +260,8 @@ def generate_midi_with_sentiment(model, classifier, sentiment, tokenizer, idx2ch
     #     output_sentence = tokenizer.decode(output_seq)
     #     # output_sentence = re.sub(r'w_\w+\b', 'w_2', output_sentence)
     #     return output_sentence
-    out =' '.join(idx2char[w] for w in start_seq)
-    return out
+    # out =' '.join(idx2char[w] for w in start_seq)
+    return start_seq
 def get_top_n(arr, n):
     flat = arr.flatten()
     idxs = np.argpartition(flat, -n)[-n:]
@@ -331,26 +339,35 @@ if __name__ == "__main__":
     except FileNotFoundError:
         print("Override JSON file not provided.")
 
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file="new_tokenizer_word_sturm.json")
-    tokenizer.unk_token = "<UNK>"
-    tokenizer.pad_token = "<PAD>"
-    vocab_size = len(tokenizer)
-    char2idx = tokenizer
+    # tokenizer = PreTrainedTokenizerFast(tokenizer_file="new_tokenizer_word_sturm.json")
+    # tokenizer.unk_token = "<UNK>"
+    # tokenizer.pad_token = "<PAD>"
+    # vocab_size = len(tokenizer)
+    pitch_range = range(21, 110)
+    beat_res ={(0, 4): 8, (4, 12): 4}
+    nb_velocities = 32
+    additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False, 'Bar':False,
+                         'rest_range': (2, 8),  # (half, 8 beats)
+                         'nb_tempos': 32,
+                         'tempo_range': (30, 200)}  # (min, max)
+    sos_eos_tokens = ['SOS']
+    remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens = True, mask=False)
+    vocab_size = len(remi_tokenizer)
+    char2idx = remi_tokenizer.vocab.event_to_token
     # Create idx2char from char2idx dict
-    idx2char = {idx: char for char, idx in tokenizer.vocab.items()}
+    idx2char = remi_tokenizer.vocab.token_to_event
 
     # Calculate vocab_size from char2idx dict
     # vocab_size = len(char2idx)
-    sentiment = 0
+    sentiment = 1
     # Rebuild generative model from checkpoint
     # gen_model = build_generative_model(vocab_size, opt.embed, opt.units, opt.layers, batch_size=1)
     # gen_model.load_weights(tf.train.latest_checkpoint(opt.genmodel))
     # gen_model.build(tf.TensorShape([1, None]))
-    model = MidiTrainingModule.load_from_checkpoint('gpt2_r1/last.ckpt', batch_size=4,
-                                                    epochs=2, samples_count=100, tokenizer=None, embedding_size=768,
-                                                    vocab_size=vocab_size, lstm_layers=3, lstm_units=3, strict=True,
-                                                    n_layer=6, n_head=6, n_embd=300, seq_len=1200, training_stride=512,
-                                                    validation_stride=512).model
+    model = MidiTrainingModule.load_from_checkpoint('gpt2_remi_new_data/last.ckpt', batch_size=4,
+                                                               epochs=2, samples_count = 100, tokenizer = None, embedding_size = 10,
+                                                               vocab_size = vocab_size, lstm_layers = 3, lstm_units = 3,
+                                                               n_layer=6, n_head = 6, n_embd = 402, seq_len=1024, training_stride=1024, validation_stride=1024).model
     model.eval()
     model.to('cuda')
     # beam_search_output = model.gpt2.generate(tokenizer.encode('\n', return_tensors='pt').to('cuda'),
@@ -358,7 +375,7 @@ if __name__ == "__main__":
     #                                     num_beams=5,
     #                                     do_sample=False,
     #                                     no_repeat_ngram_size=2)
-    classification_model = MidiClassificationModule.load_from_checkpoint('test_clssifier/epoch=1-step=56-v3.ckpt')
+    classification_model = MidiClassificationModule.load_from_checkpoint('test_clssifier/epoch=5-step=161-v1.ckpt')
     classification_model.eval()
     # classification_model.to('cuda')
     # midi_token_arrays = generate_sentiment(model=model, classifier=classification_model, sentiment=sentiment, beam_width=5,
@@ -379,8 +396,15 @@ if __name__ == "__main__":
 
     # print(midi_txt)
     #
+
+    sent_controllers = [TempoController(mode="fast")]
     for i in range(5):
-        midi_txt = generate_midi_with_sentiment(model, classification_model, 0, char2idx, idx2char, opt.seqinit,
-                                                opt.seqlen, beam_size=10)
+        midi_txt = generate_midi_with_sentiment(model, classification_model, sentiment, char2idx, idx2char, opt.seqinit,
+                                                opt.seqlen, sent_controllers=sent_controllers, beam_size=10)
         print(midi_txt)
-        me.write(midi_txt, os.path.join(GENERATED_DIR, f"generated_{i}.mid"))
+        output_sentence_midi = remi_tokenizer.tokens_to_midi([midi_txt])
+        # Path(f'{self.run_name}_generated_samples').mkdir(exist_ok=True)
+        # midi_path = f'{self.run_name}_generated_samples/{self.run_name}_step_{str(step)}.mid'
+        # write(output_sentence, midi_path)
+        output_sentence_midi.dump(os.path.join(GENERATED_DIR, f"generated_{i}.mid"))
+        # me.write(midi_txt, os.path.join(GENERATED_DIR, f"generated_{i}.mid"))

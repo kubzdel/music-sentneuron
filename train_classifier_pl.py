@@ -6,6 +6,7 @@ from pathlib import Path
 import pytorch_lightning
 import torch
 from dotenv import load_dotenv
+from miditok import REMI
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import MLFlowLogger
@@ -37,20 +38,30 @@ if __name__ == "__main__":
 
     result_path = os.path.join('', opt.run_name)
     Path(result_path).mkdir(parents=True, exist_ok=True)
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file="new_tokenizer_word_sturm.json")
-    tokenizer.unk_token = "<UNK>"
-    tokenizer.pad_token = "<PAD>"
-    tokenizer.bos_token = "\n"
-    tokenizer.eos_token = "\n"
-    vocab_size = len(tokenizer)
-    generative_model = MidiTrainingModule.load_from_checkpoint('gpt2_r1/last.ckpt', batch_size=4,
+    # tokenizer = PreTrainedTokenizerFast(tokenizer_file="new_tokenizer_word_sturm.json")
+    # tokenizer.unk_token = "<UNK>"
+    # tokenizer.pad_token = "<PAD>"
+    # tokenizer.bos_token = "\n"
+    # tokenizer.eos_token = "\n"
+    # vocab_size = len(tokenizer)
+    pitch_range = range(21, 110)
+    beat_res ={(0, 4): 8, (4, 12): 4}
+    nb_velocities = 32
+    additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False, 'Bar':False,
+                         'rest_range': (2, 8),  # (half, 8 beats)
+                         'nb_tempos': 32,
+                         'tempo_range': (30, 200)}  # (min, max)
+    sos_eos_tokens = ['SOS']
+    remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens = True, mask=False)
+    vocab_size = len(remi_tokenizer)
+    generative_model = MidiTrainingModule.load_from_checkpoint('gpt2_remi_new_data/last.ckpt', batch_size=4,
                                                                epochs=2, samples_count = 100, tokenizer = None, embedding_size = 10,
                                                                vocab_size = vocab_size, lstm_layers = 3, lstm_units = 3,
-                                                               n_layer=6, n_head = 6, n_embd = 300, seq_len=1200, training_stride=1200, validation_stride=1200).model.gpt2
-    generative_model.save_pretrained('gpt2_model_sturm_new')
-    generative_model = 'gpt2_model_sturm_new'
-    train_dataset = ClassificationDataset(opt.train, tokenizer, 400)
-    test_dataset = ClassificationDataset(opt.test, tokenizer, 400)
+                                                               n_layer=6, n_head = 6, n_embd = 402, seq_len=1024, training_stride=1024, validation_stride=1024).model.gpt2
+    generative_model.save_pretrained('gpt2_remi')
+    generative_model = 'gpt2_remi'
+    train_dataset = ClassificationDataset(opt.train, remi_tokenizer, 350)
+    test_dataset = ClassificationDataset(opt.test, remi_tokenizer, 350)
 
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=opt.batch, shuffle=True)
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=opt.batch, shuffle=False)

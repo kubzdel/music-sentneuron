@@ -96,8 +96,8 @@ def train_tokenizer(from_file=None):
 
 def generate_midi_from_txt():
         # paths = []
-    paths = [str(x) for x in Path(".").glob("vgmidi/unlabelled/test/*.txt")]
-    paths+=([str(x) for x in Path(".").glob("vgmidi/unlabelled/train/*.txt")])
+    paths = [str(x) for x in Path(".").glob("vgmidi/unlabelled/test_new/*.txt")]
+    paths+=([str(x) for x in Path(".").glob("vgmidi/unlabelled/train_new/*.txt")])
     unfiltered = 0
     filtered= 0
     for p in paths:
@@ -124,7 +124,7 @@ def generate_remi_tokens(path):
     # Converts MIDI files to tokens saved as JSON files
     tokenizer.tokenize_midi_dataset(paths, path, midi_valid)
 if __name__ == "__main__":
-    # generate_midi_from_txt()
+    generate_midi_from_txt()
     # train_tokenizer(from_file='trained/char2idx_sturm.json')
-    generate_remi_tokens("vgmidi/unlabelled/test")
+    # generate_remi_tokens("vgmidi/unlabelled/test")
     # count_tokens()

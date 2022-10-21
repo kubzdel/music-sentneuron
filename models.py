@@ -162,10 +162,17 @@ class TransformerClassificationModel(nn.Module):
             nn.Linear(self.gpt2_class.config.hidden_size, self.gpt2_class.config.hidden_size * 2),
             nn.GELU(),
             nn.Dropout(0.3),
-            nn.Linear(self.gpt2_class.config.hidden_size * 2, 2)
+            nn.Linear(self.gpt2_class.config.hidden_size * 2, self.gpt2_class.config.hidden_size),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(self.gpt2_class.config.hidden_size, 2)
             # nn.Sigmoid()
         )
         self.gpt2_class.score = self.classification_head
+        self.gpt2_class.bos_token_id = 2
+        self.gpt2_class.eos_token_id = 3
+        self.gpt2_class.config.bos_token_id = 2
+        self.gpt2_class.config.eos_token_id = 3
         # for p in self.gpt2_class.transformer.parameters():
         #     p.requires_grad = False
         # self.gpt2_class.classifier = self.classification_head
@@ -178,9 +185,9 @@ class TransformerClassificationModel(nn.Module):
         Returns:
             Dictionary with model outputs (e.g: logits)
         """
-        input_ids = torch.squeeze(input['input_ids'], 1)
-        attention_mask = torch.squeeze(input['attention_mask'], 1)
-        outputs = self.gpt2_class(input_ids, attention_mask=attention_mask)
+        # input_ids = torch.squeeze(input['input_ids'], 1)
+        # attention_mask = torch.squeeze(input['attention_mask'], 1)
+        outputs = self.gpt2_class(input['input_ids'], attention_mask=input['attention_mask'])
         # pooled_output = outputs[0]
         # logits = self.classification_head(pooled_output)
         return outputs.logits

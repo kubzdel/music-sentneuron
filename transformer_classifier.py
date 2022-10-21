@@ -93,7 +93,7 @@ class MidiClassificationModule(pl.LightningModule):
     def configure_optimizers(self):
         """ Sets Learning rate for different parameter groups. """
         optimizer = AdamW(self.model.parameters(),
-                          lr=3e-5,  # args.learning_rate - default is 5e-5, our notebook had 2e-5
+                          lr=1e-5,  # args.learning_rate - default is 5e-5, our notebook had 2e-5
                           eps=1e-8,
                           betas=(0.9, 0.999),
                           weight_decay=0.01

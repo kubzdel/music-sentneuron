@@ -58,7 +58,7 @@ def remi_encode(file_path, tokenizer, transpose_range=0):
 
     # Converts MIDI to tokens, and back to a MIDI
     raw_tokens = tokenizer.midi_to_tokens(midi)
-    converted_back_midi = tokenizer.tokens_to_midi(raw_tokens, get_midi_programs(midi))
+    converted_back_midi = tokenizer.tokens_to_midi(raw_tokens)
     file_folder = file_path.split('/')[:-1]
     file_name = file_path.split('/')[-1]
     decoded_path = os.path.join(*file_folder, file_name.split('.mid')[0] + '_decoded.mid')
@@ -123,7 +123,7 @@ def load(datapath, sample_freq=FREQ, piano_range=(33, 93), transpose_range=10, s
             file_extension = os.path.splitext(file_path)[1]
 
             # Check if it is not a directory and if it has either .midi or .mid extentions
-            if os.path.isfile(file_path) and (file_extension == ".midi" or file_extension == ".mid"):
+            if os.path.isfile(file_path) and (file_extension == ".midi" or file_extension == ".mid") and ('decoded' not in file_path):
                 encoded_midi = parse_midi(file_path, sample_freq, piano_range, transpose_range, stretching_range, ignore)
 
                 if len(encoded_midi) > 0:
@@ -152,62 +152,64 @@ def parse_midi(file_path, sample_freq, piano_range, transpose_range, stretching_
         midi_fp = open(midi_txt_name, "r")
         encoded_midi = midi_fp.read()
         midi_fp.close()
+        return encoded_midi
     else:
-        if ignore:
-            return ""
-        random_name = uuid.uuid4().hex + ".mid"
-        random_path = os.path.join(*file_path.split('/')[:-1], random_name)
-        m = mido.MidiFile(file_path)
-        new_merged_tracks = []
-        for track in m.tracks:
-            for i in range(len(track)):
-                if not track[i].is_meta:
-                    track[i].channel = 0
-        merged_tracks = mido.merge_tracks(m.tracks)
-
-        mido_empty = MidoFile(type=0)
-        mido_empty.tracks.append(merged_tracks)
-        mm = merged_tracks[0]
-        mido_empty.ticks_per_beat = m.ticks_per_beat
-
-        mido_empty.save(random_path)
-        # Create a music21 stream and open the midi file
-        midi = m21.midi.MidiFile()
-        midi.open(random_path)
-        midi.read()
-        midi.close()
-
-        m = m21.converter.parse(random_path)
-        fp = m.write('midi', fp='pathToWhereYouWantToWriteIt.mid')
-        # Creates the tokenizer and loads a MIDI
-        pitch_range = range(21, 109)
-        beat_res = {(0, 4): 8, (4, 12): 16}
-        nb_velocities = 32
-        additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False,
-                             'rest_range': (2, 8),  # (half, 8 beats)
-                             'nb_tempos': 32,  # nb of tempo bins
-                             'tempo_range': (40, 250)}  # (min, max)
-        tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, mask=False)
-
-        midi = MidiFile(file_path)
-        # midi2 = MidiFile(file_path)
-        midi.instruments[1].notes.extend(midi.instruments[0].notes)
-        midi.instruments = midi.instruments[1:]
-
-
-        # Converts MIDI to tokens, and back to a MIDI
-        tokens = tokenizer.midi_to_tokens(midi)
-        converted_back_midi = tokenizer.tokens_to_midi(tokens, get_midi_programs(midi))
-        converted_back_midi.dump('merged4.mid')
-        # Translate midi to stream of notes and chords
-        encoded_midi = midi2encoding(midi, sample_freq, piano_range, transpose_range, stretching_range)
-        os.remove(random_path)
-        if len(encoded_midi) > 0:
-            midi_fp = open(midi_txt_name, "w+")
-            midi_fp.write(encoded_midi)
-            midi_fp.flush()
-            midi_fp.close()
-    return encoded_midi
+        return ""
+    #     if ignore:
+    #         return ""
+    #     random_name = uuid.uuid4().hex + ".mid"
+    #     random_path = os.path.join(*file_path.split('/')[:-1], random_name)
+    #     m = mido.MidiFile(file_path)
+    #     new_merged_tracks = []
+    #     for track in m.tracks:
+    #         for i in range(len(track)):
+    #             if not track[i].is_meta:
+    #                 track[i].channel = 0
+    #     merged_tracks = mido.merge_tracks(m.tracks)
+    #
+    #     mido_empty = MidoFile(type=0)
+    #     mido_empty.tracks.append(merged_tracks)
+    #     mm = merged_tracks[0]
+    #     mido_empty.ticks_per_beat = m.ticks_per_beat
+    #
+    #     mido_empty.save(random_path)
+    #     # Create a music21 stream and open the midi file
+    #     midi = m21.midi.MidiFile()
+    #     midi.open(random_path)
+    #     midi.read()
+    #     midi.close()
+    #
+    #     m = m21.converter.parse(random_path)
+    #     fp = m.write('midi', fp='pathToWhereYouWantToWriteIt.mid')
+    #     # Creates the tokenizer and loads a MIDI
+    #     pitch_range = range(21, 109)
+    #     beat_res = {(0, 4): 8, (4, 12): 16}
+    #     nb_velocities = 32
+    #     additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False,
+    #                          'rest_range': (2, 8),  # (half, 8 beats)
+    #                          'nb_tempos': 32,  # nb of tempo bins
+    #                          'tempo_range': (40, 250)}  # (min, max)
+    #     tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, mask=False)
+    #
+    #     midi = MidiFile(file_path)
+    #     # midi2 = MidiFile(file_path)
+    #     midi.instruments[1].notes.extend(midi.instruments[0].notes)
+    #     midi.instruments = midi.instruments[1:]
+    #
+    #
+    #     # Converts MIDI to tokens, and back to a MIDI
+    #     tokens = tokenizer.midi_to_tokens(midi)
+    #     converted_back_midi = tokenizer.tokens_to_midi(tokens, get_midi_programs(midi))
+    #     converted_back_midi.dump('merged4.mid')
+    #     # Translate midi to stream of notes and chords
+    #     encoded_midi = midi2encoding(midi, sample_freq, piano_range, transpose_range, stretching_range)
+    #     os.remove(random_path)
+    #     if len(encoded_midi) > 0:
+    #         midi_fp = open(midi_txt_name, "w+")
+    #         midi_fp.write(encoded_midi)
+    #         midi_fp.flush()
+    #         midi_fp.close()
+    # return encoded_midi
 
 
 def midi2encoding(midi, sample_freq, piano_range, transpose_range, stretching_range):
@@ -608,7 +610,6 @@ if __name__ == "__main__":
                          'rest_range': (2, 8),  # (half, 8 beats)
                          'nb_tempos': 32,
                          'tempo_range': (30, 200)}  # (min, max)
-    sos_eos_tokens = ['SOS']
     remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens = True, mask=False)
     # remi_encode("vgmidi/unlabelled/test/Final_Fantasy_7_LurkingInTheDarkness.mid", tokenizer=remi_tokenizer, transpose_range=10)
     remi_multiprocessing_encode(opt.path, tokenizer=remi_tokenizer, transpose_range=opt.transp, n_process=100)

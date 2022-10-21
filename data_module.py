@@ -1,7 +1,7 @@
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 
-from symbolic_dataset import SymbolicDataset, SymbolicDatasetTruncate
+from symbolic_dataset import SymbolicDataset, SymbolicDatasetTruncate, RemiDatasetTruncate
 
 
 class MusicDataModule(pl.LightningDataModule):
@@ -18,7 +18,7 @@ class MusicDataModule(pl.LightningDataModule):
         self.val_stride = val_stride
 
     def _build_default_custom_dataset(self, symbolic_text, stride):
-        return SymbolicDatasetTruncate(symbolic_text, self.tokenizer, self.sequence_length, stride)
+        return RemiDatasetTruncate(symbolic_text, self.tokenizer, self.sequence_length, stride)
 
     def setup(self, stage=None):
         if stage == 'fit' or stage is None:
