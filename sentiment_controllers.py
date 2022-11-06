@@ -17,3 +17,8 @@ class TempoController(SentimentController):
     def __init__(self, mode):
         super().__init__(mode)
         self.controlled_token_ids = {"slow": range(256, 279), "fast": range(247, 265)}
+
+class PitchController(SentimentController):
+    def __init__(self, mode):
+        super().__init__(mode)
+        self.controlled_token_ids = {"low": range(44, 92), "high": range(4, 34)}
