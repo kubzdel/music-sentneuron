@@ -118,11 +118,20 @@ def generate_midi_file(model_to_download):
   midi_events = inference_model(ort_session, remi_tokenizer)
 
   path = "tmp.mid"
+  # midi_events.open(path, "wb")
+  # midi_events.write()
+  # midi_events.close()
+
+
+  #midi_events.writeFile(path)
+
+  #midi_events.dump(os.path.join(GENERATED_DIR, path))
+
+  #write(midi_events, path)
 
   return path
 
 def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_model(ort_session, tokenizer, model_path)
-  #output_seq = tokenizer.encode(start_seq, return_tensors=True)
 
   output_seq = torch.tensor(start_seq)
   #output_seq = Tokenizer.generate_midi_from_txt(start_seq)#.encode(start_seq, return_tensors=True)
@@ -153,10 +162,7 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
 
 
   output_seq = output_seq.tolist()
-  #output_seq = output_seq.detach().cpu().numpy()[0]
-  #print("Hello :)))", output_seq)
   output_sentence = remi_tokenizer.tokens_to_midi([output_seq])  #self, tokens: List[int]    tokens: List[List[Union[int, List[int]]]]
-
   path = "tmp.mid"
   #generated_midi = tokenizer.tokens_to_midi(tokens, programs)
   output_sentence.dump(path)
@@ -191,10 +197,16 @@ def generate_midi_with_sent(model_to_download, start_seq=[2], sentiment = 1):
   #
   # classification_model = MidiClassificationModule.load_from_checkpoint('test_clssifier/epoch=5-step=161-v1.ckpt')
   #start_seq = generate_midi_with_sentiment(ort_session, char2idx, idx2char, 1,  "" , SEQ_LEN, [], 10)
-  generate_midi_with_sentiment(ort_session, clas_session, sentiment, remi_tokenizer, idx2char, output_seq, init_text="",
+  generate_midi_with_sentiment(ort_session, clas_session, sentiment, remi_tokenizer, idx2char, output_seq,
                                seq_len=SEQ_LEN, k=3, sent_controllers=[], beam_size=4)
 
   output_sentence_midi = remi_tokenizer.tokens_to_midi([start_seq])
+  # Path(f'{self.run_name}_generated_samples').mkdir(exist_ok=True)
+  # midi_path = f'{self.run_name}_generated_samples/{self.run_name}_step_{str(step)}.mid'
+  # write(output_sentence, midi_path)
+  #path = "generated_sentiment_{sentiment}.mid"#"tmp.mid"
+  #write(output_sentence_midi, path)
+  #output_sentence_midi.dump(os.path.join(GENERATED_DIR, f"generated_sentiment_{sentiment}.mid"))
 
   return None #path
 
@@ -225,13 +237,17 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
         with torch.no_grad():
           input_eval = torch.tensor(beams[beam])
           input_eval = torch.unsqueeze(input_eval, 0)
-###############################################################tu dac onnx
+###############################################################onnx
           predicted_token = torch.Tensor([1])
           while (
                   len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
           ):
-            onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(output_seq, 0))}
+            lista = list(output_seq.values())    #" ".join(
+            print("typ", type(lista ))
+            print("sequence", np.array(lista).shape )
+            onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(torch.Tensor(lista ), 279))} #0
             predictions = generative_model.run(None, onnx_input)[0]
+
           #predictions = generative_model(input_eval)
 #######################################
           # remove the batch dimension
@@ -269,7 +285,7 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
       classification_input = {"input_ids": torch.unsqueeze(torch.tensor(ids), 0),
                               "attention_mask": torch.unsqueeze(torch.tensor(attention_mask), 0)}
 
-##############################tu dac onnx
+##############################onnx
       predicted_token = torch.Tensor([1])
       while (
               len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
