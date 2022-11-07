@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 import uvicorn
+from miditoolkit import MidiFile
 import os
 from pathlib import PurePosixPath
 import torch
@@ -15,7 +16,7 @@ from tokenizer import MidiTokenizer
 import music21 as m21
 from utils import top_k_top_p_filtering
 from transformer_classifier import MidiClassificationModule
-from miditok import REMI
+from miditok import REMI, get_midi_programs
 from transformers import PreTrainedTokenizerFast, TypicalLogitsWarper, RepetitionPenaltyLogitsProcessor, \
     TopKLogitsWarper, TopPLogitsWarper
 import numpy as np
@@ -115,21 +116,10 @@ def generate_midi_file(model_to_download):
 
   # wczytanie modelu
   ort_session = onnxruntime.InferenceSession(model_path)
-  midi_events = inference_model(ort_session, remi_tokenizer)
-
-  path = "tmp.mid"
-  # midi_events.open(path, "wb")
-  # midi_events.write()
-  # midi_events.close()
+  midi_path = inference_model(ort_session, remi_tokenizer)
 
 
-  #midi_events.writeFile(path)
-
-  #midi_events.dump(os.path.join(GENERATED_DIR, path))
-
-  #write(midi_events, path)
-
-  return path
+  return midi_path
 
 def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_model(ort_session, tokenizer, model_path)
 
@@ -140,6 +130,12 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
           len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
   ):
     onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(output_seq, 0))}
+    print("onnx_input", onnx_input)
+    #onnx_input {'input_tokens': array([[  2, 213, 271,  57, 108, 129, 217, 271,  67, 107, 127,   1, 189,
+        # 271,  24, 109, 129,  64, 107, 128, 193, 271, 213, 271,  50]])}
+
+    #{'input_tokens': array([[[2]]])}
+
     outputs = onnxsession.run(None, onnx_input)[0]
     #outputs = self.forward(torch.unsqueeze(output_seq, 0), permute=False)
 
@@ -160,14 +156,16 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
     output_seq = torch.cat([output_seq, predicted_token])
   output_seq = output_seq[1:-1]
 
+  #wrzucenie sekwencji do pliku
+  output_seq = [output_seq.tolist()]
+  print("output_seq", output_seq)
+  output_sentence = remi_tokenizer.tokens_to_midi(output_seq)#, get_midi_programs(midi))  #self, tokens: List[int]    tokens: List[List[Union[int, List[int]]]]
 
-  output_seq = output_seq.tolist()
-  output_sentence = remi_tokenizer.tokens_to_midi([output_seq])  #self, tokens: List[int]    tokens: List[List[Union[int, List[int]]]]
-  path = "tmp.mid"
-  #generated_midi = tokenizer.tokens_to_midi(tokens, programs)
+  print("output_sentence", output_sentence)
+  path = "non_sentiment.mid"
   output_sentence.dump(path)
 
-  return output_sentence
+  return path #output_sentence
 
 
 
@@ -197,18 +195,21 @@ def generate_midi_with_sent(model_to_download, start_seq=[2], sentiment = 1):
   #
   # classification_model = MidiClassificationModule.load_from_checkpoint('test_clssifier/epoch=5-step=161-v1.ckpt')
   #start_seq = generate_midi_with_sentiment(ort_session, char2idx, idx2char, 1,  "" , SEQ_LEN, [], 10)
-  generate_midi_with_sentiment(ort_session, clas_session, sentiment, remi_tokenizer, idx2char, output_seq,
+  output_sentence = generate_midi_with_sentiment(ort_session, clas_session, sentiment, remi_tokenizer, idx2char, output_seq,
                                seq_len=SEQ_LEN, k=3, sent_controllers=[], beam_size=4)
 
-  output_sentence_midi = remi_tokenizer.tokens_to_midi([start_seq])
-  # Path(f'{self.run_name}_generated_samples').mkdir(exist_ok=True)
-  # midi_path = f'{self.run_name}_generated_samples/{self.run_name}_step_{str(step)}.mid'
-  # write(output_sentence, midi_path)
-  #path = "generated_sentiment_{sentiment}.mid"#"tmp.mid"
-  #write(output_sentence_midi, path)
-  #output_sentence_midi.dump(os.path.join(GENERATED_DIR, f"generated_sentiment_{sentiment}.mid"))
+  #output_sentence_midi = remi_tokenizer.tokens_to_midi([start_seq])
 
-  return None #path
+  output_sentence = [output_sentence.tolist()]
+  print("output_seq", output_sentence)
+  output_midi = remi_tokenizer.tokens_to_midi(
+    output_sentence)  # , get_midi_programs(midi))  #self, tokens: List[int]    tokens: List[List[Union[int, List[int]]]]
+
+  print("output_sentence", output_midi )
+  path = "non_sentiment.mid"
+  output_midi .dump(path)
+
+  return path  # output_sentence
 
 
 def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2char, output_seq, init_text="",
@@ -225,9 +226,8 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
   beams = [[] for i in range(beam_size)]
   typical_logits_wraper = TypicalLogitsWarper(mass=0.7)
   logits_penalty = RepetitionPenaltyLogitsProcessor(penalty=1.2)
-  # beams = np.empty((beam_size, 1), dtype=np.int32)
-  # start_seq = tokenizer.encode("\n", return_tensors='pt').to('cuda')
   start_seq = [2]
+
   # model.to('cuda')
   while (len(beams[0])) < 1024:
     beams_prob = [1 for i in range(beam_size)]
@@ -237,16 +237,32 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
         with torch.no_grad():
           input_eval = torch.tensor(beams[beam])
           input_eval = torch.unsqueeze(input_eval, 0)
-###############################################################onnx
+###############################################################tu dac onnx
           predicted_token = torch.Tensor([1])
-          while (
-                  len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
-          ):
-            lista = list(output_seq.values())    #" ".join(
-            print("typ", type(lista ))
-            print("sequence", np.array(lista).shape )
-            onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(torch.Tensor(lista ), 279))} #0
-            predictions = generative_model.run(None, onnx_input)[0]
+          # while (
+          #         len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
+          # ):
+            # print("typ output sequence", type(output_seq))
+            #lista = list(output_seq.keys())    #" ".join(
+            # print("typ", type(lista ))
+            # print("lista", lista)
+            # print("sequence", np.array(lista).shape )
+          onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(torch.Tensor(input_eval), 0))} #[int(i) for i in lista ]), 0))} #0  279
+          onnx_input['input_tokens'] = onnx_input['input_tokens'][0]
+                                                      #onnx_input {'input_tokens': array([[2]])}
+          print("onnx_input", onnx_input)   #printuje onnx_input {'input_tokens': array([[[2]]])}
+
+          # w inference: onnx_input {'input_tokens': array([[  2, 213, 271,  57, 108, 129, 217, 271,  67, 107, 127,   1, 189,
+          # 271,  24, 109, 129,  64, 107, 128, 193, 271, 213, 271,  50]])}
+
+          # tutaj: {'input_tokens': array([[[2]]])}
+
+          predictions = generative_model.run(None, onnx_input)[0]
+          predictions = torch.tensor(predictions)
+          #print("predictions", predictions)
+
+          # predictions        [[[-7.35430479e+00  6.29620457e+00  3.55569959e+00  7.50714481e-01
+          # predictions tensor([[[-7.3543e+00,  6.2962e+00,  3.5557e+00,  7.5071e-01, -4.3531e+00,
 
           #predictions = generative_model(input_eval)
 #######################################
@@ -285,20 +301,25 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
       classification_input = {"input_ids": torch.unsqueeze(torch.tensor(ids), 0),
                               "attention_mask": torch.unsqueeze(torch.tensor(attention_mask), 0)}
 
-##############################onnx
+##############################tu dac onnx
+
       predicted_token = torch.Tensor([1])
-      while (
-              len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
-      ):
-        onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(output_seq, 0)), "attention_mask": to_numpy(torch.unsqueeze(output_seq, 0))}
-        classification_output = F.softmax(classifier.run(None, onnx_input)[0]).detach().cpu().numpy()[0]
+      # while (
+      #         len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
+      # ):
+      # onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(output_seq, 0)), "attention_mask": to_numpy(torch.unsqueeze(output_seq, 0))}
+      # classification_output = F.softmax(classifier.run(None, onnx_input)[0]).detach().cpu().numpy()[0]
+      classification_input = {"input_ids": torch.unsqueeze(torch.tensor(ids), 0),
+                              "attention_mask": torch.unsqueeze(torch.tensor(attention_mask), 0)}
+      ################################################here onnx
+      classification_output = F.softmax(classifier.run(None, classification_input)).detach().cpu().numpy()[0]
       #classification_output = F.softmax(classifier(classification_input)).detach().cpu().numpy()[0]
       stacked_classifications.append(classification_output)
     stacked_classifications = np.array(stacked_classifications)
     k = np.argmax(stacked_classifications[:, sentiment], axis=0)
     start_seq = beams[k]
 
-  return start_seq
+  return start_seq    #want to return tokens sequence
 
 #   predicted_token = torch.multinomial(probabilities, 1)
 #   output_seq = torch.cat([output_seq, predicted_token])
@@ -306,3 +327,5 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
 #   outputs = ort_session.run(None, onnx_input)[0]
 
 
+#predictions        [[[-7.35430479e+00  6.29620457e+00  3.55569959e+00  7.50714481e-01
+#predictions tensor([[[-7.3543e+00,  6.2962e+00,  3.5557e+00,  7.5071e-01, -4.3531e+00,
