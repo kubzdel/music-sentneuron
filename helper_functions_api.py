@@ -11,6 +11,7 @@ from starlette.responses import StreamingResponse
 from cachetools.func import lru_cache
 
 import onnxruntime
+import onnx
 import torch.nn.functional as F
 from tokenizer import MidiTokenizer
 import music21 as m21
@@ -92,16 +93,51 @@ def download_metadata(model_to_download):
                  secret_key=os.environ["AWS_SECRET_ACCESS_KEY"], secure=False)
   model_bucket_path = str(PurePosixPath('deployment', '{}'.format(model_to_download)))  # aws_path
 
-  model = client.fget_object(os.environ["AWS_BUCKET_NAME"], model_bucket_path, "downloaded_model.onnx")
+  model = client.fget_object(os.environ["AWS_BUCKET_NAME"], model_bucket_path, f"{model_to_download}")
   # tokenizer
   # token_bucket_path = str(PurePosixPath('deployment', '{}'.format("char2idx.json")))
   # tokenizer_file = client.fget_object(os.environ["AWS_BUCKET_NAME"], token_bucket_path, "downloaded_tokenizer.json")
 
-  return model, "downloaded_model.onnx"#, tokenizer_file, "downloaded_tokenizer.json"
+  return model, f"{model_to_download}"#, tokenizer_file, "downloaded_tokenizer.json"
 
 def generate_midi_file(model_to_download):
   #wczytanie modelu z bucketa (potrzebny model i tokenizer (dane na buckecie)
   model, model_path = download_metadata(model_to_download)    #, tokenizer, tokenizer_path
+
+  #clasiffier:                input.name input_tokens: known dimension 1, unknown dimension with symbolic name input_tokens_dynamic_axes_1
+                                  #Invalid rank for input: input_tokens Got: 1 Expected: 2 Please fix either the inputs or the model.
+  # input.name input_tokens: input tensor type shape
+  # dim
+  # {
+  #   dim_value: 1
+  # }
+  # dim
+  # {
+  #   dim_param: "input_tokens_dynamic_axes_1"
+  # }
+  #
+  # known dimension 1, unknown   dimension with symbolic name input_tokens_dynamic_axes_1   - same for both - classifier and generative model
+
+  #model with no sentiment:   input.name input_tokens: known dimension 1, unknown dimension with symbolic name input_tokens_dynamic_axes_1
+
+  # for input in model.graph.input:
+  #   print("input.name", input.name, end=": ")
+  #   # get type of input tensor
+  #   tensor_type = input.type.tensor_type
+  #   # check if it has a shape:
+  #   if (tensor_type.HasField("shape")):
+  #     # iterate through dimensions of the shape:
+  #     print("input tensor type shape", tensor_type.shape)
+  #     for d in tensor_type.shape.dim:
+  #       # the dimension may have a definite (integer) value or a symbolic identifier or neither:
+  #       if (d.HasField("dim_value")):
+  #         print("known dimension", d.dim_value, end=", ")  # known dimension
+  #       elif (d.HasField("dim_param")):
+  #         print("unknown dimension with symbolic name", d.dim_param)  # unknown dimension with symbolic name
+  #       else:
+  #         print("?", end=", ")  # unknown dimension with no nameam)  # unknown dimension with symbolic name
+  #       else:
+  #         print("?", end=", ")  # unknown dimension with no name
 
   #utworzenie tokenizera
   pitch_range = range(21, 110)
@@ -130,7 +166,7 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
           len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
   ):
     onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(output_seq, 0))}
-    print("onnx_input", onnx_input)
+    #print("onnx_input", onnx_input)
     #onnx_input {'input_tokens': array([[  2, 213, 271,  57, 108, 129, 217, 271,  67, 107, 127,   1, 189,
         # 271,  24, 109, 129,  64, 107, 128, 193, 271, 213, 271,  50]])}
 
@@ -158,10 +194,10 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
 
   #wrzucenie sekwencji do pliku
   output_seq = [output_seq.tolist()]
-  print("output_seq", output_seq)
+  #print("output_seq", output_seq)
   output_sentence = remi_tokenizer.tokens_to_midi(output_seq)#, get_midi_programs(midi))  #self, tokens: List[int]    tokens: List[List[Union[int, List[int]]]]
 
-  print("output_sentence", output_sentence)
+  #print("output_sentence", output_sentence)
   path = "non_sentiment.mid"
   output_sentence.dump(path)
 
@@ -169,13 +205,32 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
 
 
 
-def generate_midi_with_sent(model_to_download, start_seq=[2], sentiment = 1):
+def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq=[2], sentiment = 1):
   #GENERATIVE_MODEL
   model, model_path = download_metadata(model_to_download)     #, tokenizer, tokenizer_path
   ort_session = onnxruntime.InferenceSession(model_path)
   output_seq = torch.tensor(start_seq)
   #CLASSIFIER
-  classifier, classifier_path = download_metadata(model_to_download)     #, tokenizer, tokenizer_path
+  classifier, classifier_path = download_metadata(classifier_to_download)     #, tokenizer, tokenizer_path
+  # model = onnx.load(classifier_path)
+  # for input in model.graph.input:
+  #   print("input.name", input.name, end=": ")
+  #   # get type of input tensor
+  #   tensor_type = input.type.tensor_type
+  #   # check if it has a shape:
+  #   if (tensor_type.HasField("shape")):
+  #     # iterate through dimensions of the shape:
+  #     print("input tensor type shape", tensor_type.shape)
+  #     for d in tensor_type.shape.dim:
+  #       # the dimension may have a definite (integer) value or a symbolic identifier or neither:
+  #       if (d.HasField("dim_value")):
+  #         print("known dimension", d.dim_value, end=", ")  # known dimension
+  #       elif (d.HasField("dim_param")):
+  #         print("unknown dimension with symbolic name", d.dim_param)  # unknown dimension with symbolic name
+  #       else:
+  #         print("?", end=", ")  # unknown dimension with no name
+
+
   clas_session = onnxruntime.InferenceSession(classifier_path)
   #output_seq = torch.tensor(start_seq)
   # output_seq = Tokenizer.generate_midi_from_txt(start_seq)#.encode(start_seq, return_tensors=True)
@@ -200,12 +255,12 @@ def generate_midi_with_sent(model_to_download, start_seq=[2], sentiment = 1):
 
   #output_sentence_midi = remi_tokenizer.tokens_to_midi([start_seq])
 
-  output_sentence = [output_sentence.tolist()]
-  print("output_seq", output_sentence)
+  output_sentence = [output_sentence]#.tolist()
+  #print("output_seq", output_sentence)
   output_midi = remi_tokenizer.tokens_to_midi(
     output_sentence)  # , get_midi_programs(midi))  #self, tokens: List[int]    tokens: List[List[Union[int, List[int]]]]
 
-  print("output_sentence", output_midi )
+  #print("output_sentence", output_midi )
   path = "non_sentiment.mid"
   output_midi .dump(path)
 
@@ -250,7 +305,7 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
           onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(torch.Tensor(input_eval), 0))} #[int(i) for i in lista ]), 0))} #0  279
           onnx_input['input_tokens'] = onnx_input['input_tokens'][0]
                                                       #onnx_input {'input_tokens': array([[2]])}
-          print("onnx_input", onnx_input)   #printuje onnx_input {'input_tokens': array([[[2]]])}
+          #print("onnx_input", onnx_input)   #printuje onnx_input {'input_tokens': array([[[2]]])}
 
           # w inference: onnx_input {'input_tokens': array([[  2, 213, 271,  57, 108, 129, 217, 271,  67, 107, 127,   1, 189,
           # 271,  24, 109, 129,  64, 107, 128, 193, 271, 213, 271,  50]])}
@@ -301,31 +356,64 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
       classification_input = {"input_ids": torch.unsqueeze(torch.tensor(ids), 0),
                               "attention_mask": torch.unsqueeze(torch.tensor(attention_mask), 0)}
 
-##############################tu dac onnx
+##############################here onnx
 
-      predicted_token = torch.Tensor([1])
+      #predicted_token = torch.Tensor([1])
       # while (
       #         len(output_seq) < SEQ_LEN - 1 and predicted_token.unsqueeze(-1)[0] != 0
       # ):
       # onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(output_seq, 0)), "attention_mask": to_numpy(torch.unsqueeze(output_seq, 0))}
       # classification_output = F.softmax(classifier.run(None, onnx_input)[0]).detach().cpu().numpy()[0]
-      classification_input = {"input_ids": torch.unsqueeze(torch.tensor(ids), 0),
-                              "attention_mask": torch.unsqueeze(torch.tensor(attention_mask), 0)}
-      ################################################here onnx
-      classification_output = F.softmax(classifier.run(None, classification_input)).detach().cpu().numpy()[0]
+      #print("input_tokens", to_numpy(torch.unsqueeze(torch.tensor(ids), 0)[0]))
+      classification_input = {"input_tokens": to_numpy(torch.unsqueeze(torch.tensor(ids), 0)),
+                              "attention_mask": to_numpy(torch.unsqueeze(torch.tensor(attention_mask), 0))} #[0]
+      #print("dim here", torch.tensor(classifier.run(None, classification_input)[0]))
+      #midi_generator:   dim here tensor([[-3.3242,  3.3131]], grad_fn=<IndexBackward0>)
+
+      # iterate through inputs of the graph
+      classification_output = F.softmax(torch.tensor(classifier.run(None, classification_input)[0])).detach().cpu().numpy()#[0]
       #classification_output = F.softmax(classifier(classification_input)).detach().cpu().numpy()[0]
-      stacked_classifications.append(classification_output)
+
+
+
+      # onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(torch.Tensor(input_eval), 0))}  # [int(i) for i in lista ]), 0))} #0  279
+      # onnx_input['input_tokens'] = onnx_input['input_tokens'][0]
+      # # onnx_input {'input_tokens': array([[2]])}
+      # # print("onnx_input", onnx_input)   #printuje onnx_input {'input_tokens': array([[[2]]])}
+      # # w inference: onnx_input {'input_tokens': array([[  2, 213, 271,  57, 108, 129, 217, 271,  67, 107, 127,   1, 189,
+      # # 271,  24, 109, 129,  64, 107, 128, 193, 271, 213, 271,  50]])}
+      # # tutaj: {'input_tokens': array([[[2]]])}
+      # predictions = generative_model.run(None, onnx_input)[0]
+      # predictions = torch.tensor(predictions)
+
+
+      ################################################
+      stacked_classifications.append(classification_output[0])
+
     stacked_classifications = np.array(stacked_classifications)
+    #print("stacked_classifications", stacked_classifications)
+
+    #midi_generator:  stacked_classifications
+    # [[1.3853261e-03 9.9861467e-01]
+    # [9.6910825e-04 9.9903095e-01]
+    # [1.1884285e-03 9.9881160e-01]
+    # [1.2900787e-03 9.9870992e-01]
+    # [3.3826299e-02 9.6617371e-01]
+    # [1.0576457e-03 9.9894232e-01]
+    # [2.2872295e-03 9.9771273e-01]
+    # [1.2408078e-03 9.9875915e-01]
+    # [2.6066171e-03 9.9739337e-01]
+    # [1.4162578e-03 9.9858379e-01]]   10 podlist
+
+    #helper_functions:  stacked_classifications
+    # [[0.0047385  0.9952615]
+    # [0.98576224 0.01423775]
+    # [0.00202938 0.99797064]
+    # [0.00285751 0.9971425]]  4 podlisty
+
     k = np.argmax(stacked_classifications[:, sentiment], axis=0)
     start_seq = beams[k]
 
   return start_seq    #want to return tokens sequence
 
-#   predicted_token = torch.multinomial(probabilities, 1)
-#   output_seq = torch.cat([output_seq, predicted_token])
-#   onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(output_seq, 0))}
-#   outputs = ort_session.run(None, onnx_input)[0]
 
-
-#predictions        [[[-7.35430479e+00  6.29620457e+00  3.55569959e+00  7.50714481e-01
-#predictions tensor([[[-7.3543e+00,  6.2962e+00,  3.5557e+00,  7.5071e-01, -4.3531e+00,
