@@ -105,7 +105,7 @@ def generate_midi_file(model_to_download):
   remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens=True, mask=False)
 
   # wczytanie modelu
-  ort_session = onnxruntime.InferenceSession(model_path)
+  ort_session = onnxruntime.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
   midi_path = inference_model(ort_session, remi_tokenizer)
 
 
@@ -162,7 +162,7 @@ def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq
   #CLASSIFIER
   classifier, classifier_path = download_metadata(classifier_to_download)     #, tokenizer, tokenizer_path
 
-  clas_session = onnxruntime.InferenceSession(classifier_path)
+  clas_session = onnxruntime.InferenceSession(classifier_path, providers=['CUDAExecutionProvider'])
   #output_seq = torch.tensor(start_seq)
   # output_seq = Tokenizer.generate_midi_from_txt(start_seq)#.encode(start_seq, return_tensors=True)
   #TOKENIZER
