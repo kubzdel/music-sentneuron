@@ -9,4 +9,4 @@ RUN pip install -r requirements_api.txt
 
 COPY . .
 
-CMD [ "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD [ "uvicorn", "model_api:app", "--host", "0.0.0.0", "--port", "8080"]
