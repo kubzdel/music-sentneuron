@@ -1,23 +1,13 @@
-
-
-from fastapi import FastAPI
-import uvicorn
-from miditoolkit import MidiFile
 import os
 from pathlib import PurePosixPath
 import torch
 from minio import Minio
-from starlette.responses import StreamingResponse
 from cachetools.func import lru_cache
 
 import onnxruntime
-import onnx
 import torch.nn.functional as F
-from tokenizer import MidiTokenizer
-import music21 as m21
 from utils import top_k_top_p_filtering
-from transformer_classifier import MidiClassificationModule
-from miditok import REMI, get_midi_programs
+from miditok import REMI
 from transformers import PreTrainedTokenizerFast, TypicalLogitsWarper, RepetitionPenaltyLogitsProcessor, \
     TopKLogitsWarper, TopPLogitsWarper
 import numpy as np
