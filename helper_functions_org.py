@@ -157,7 +157,7 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
 def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq=[2], sentiment = 1):
   #GENERATIVE_MODEL
   model, model_path = download_metadata(model_to_download)     #, tokenizer, tokenizer_path
-  ort_session = onnxruntime.InferenceSession(model_path)
+  ort_session = onnxruntime.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
   output_seq = torch.tensor(start_seq)
   #CLASSIFIER
   classifier, classifier_path = download_metadata(classifier_to_download)     #, tokenizer, tokenizer_path
