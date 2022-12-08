@@ -3,7 +3,8 @@ import uvicorn
 from fastapi import File, FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from helper_functions_org import *
 from dotenv import load_dotenv
 
@@ -27,7 +28,16 @@ remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, s
 model_to_download = "model_remi.onnx"
 classifier_to_download = "classifier.onnx"
 # declaring FastAPI instance
-app = FastAPI()
+app = FastAPI(middleware=[
+    Middleware(CORSMiddleware, allow_origins=["*"])
+])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 print(os.environ["AWS_BUCKET_NAME"])
 bucket_path = str(PurePosixPath('deployment', '{}'.format(model_to_download)))
 print(bucket_path)
