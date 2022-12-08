@@ -153,57 +153,12 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
   return path #output_sentence
 
 
-
-def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq=[2], sentiment = 1):
-  #GENERATIVE_MODEL
-  model, model_path = download_metadata(model_to_download)     #, tokenizer, tokenizer_path
-  ort_session = onnxruntime.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
-  output_seq = torch.tensor(start_seq)
-  #CLASSIFIER
-  classifier, classifier_path = download_metadata(classifier_to_download)     #, tokenizer, tokenizer_path
-
-  clas_session = onnxruntime.InferenceSession(classifier_path, providers=['CUDAExecutionProvider'])
-  #output_seq = torch.tensor(start_seq)
-  # output_seq = Tokenizer.generate_midi_from_txt(start_seq)#.encode(start_seq, return_tensors=True)
-  #TOKENIZER
-  pitch_range = range(21, 110)
-  beat_res = {(0, 4): 8, (4, 12): 4}
-  nb_velocities = 32
-  additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False,
-                       'Bar': False,
-                       'rest_range': (2, 8),  # (half, 8 beats)
-                       'nb_tempos': 32,
-                       'tempo_range': (30, 200)}  # (min, max)
-
-  remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens=True, mask=False)
-  char2idx = remi_tokenizer.vocab.event_to_token
-  idx2char = remi_tokenizer.vocab.token_to_event
-  #
-  # classification_model = MidiClassificationModule.load_from_checkpoint('test_clssifier/epoch=5-step=161-v1.ckpt')
-  #start_seq = generate_midi_with_sentiment(ort_session, char2idx, idx2char, 1,  "" , SEQ_LEN, [], 10)
-  output_sentence = generate_midi_with_sentiment(ort_session, clas_session, sentiment, remi_tokenizer, idx2char, output_seq,
-                               seq_len=SEQ_LEN, k=3, sent_controllers=[], beam_size=4)
-
-  #output_sentence_midi = remi_tokenizer.tokens_to_midi([start_seq])
-
-  output_sentence = [output_sentence]#.tolist()
-  #print("output_seq", output_sentence)
-  output_midi = remi_tokenizer.tokens_to_midi(
-    output_sentence)  # , get_midi_programs(midi))  #self, tokens: List[int]    tokens: List[List[Union[int, List[int]]]]
-
-  #print("output_sentence", output_midi )
-  path = "non_sentiment.mid"
-  output_midi .dump(path)
-
-  return path  # output_sentence
-
-
-def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2char, output_seq, init_text="",
-                                 seq_len=256, k=3, sent_controllers=[], beam_size=4):
+def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2char, start_seq=[],
+                                 seq_len=256, k=3, sent_controllers=[], beam_size=10):
   # Add front and end pad to the initial text
   # init_text = preprocess_sentence(init_text)
-
   # Empty midi to store our results
+  start_seq.insert(2,0)
   midi_generated = []
 
   # Process initial text
@@ -212,8 +167,7 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
   beams = [[] for i in range(beam_size)]
   typical_logits_wraper = TypicalLogitsWarper(mass=0.7)
   logits_penalty = RepetitionPenaltyLogitsProcessor(penalty=1.2)
-  start_seq = [2]
-  print("beams", len(beams)) # beans 4
+  print("beams", len(beams))  # beans 4
   # model.to('cuda')
   while (len(beams[0])) < 1024:
     beams_prob = [1 for i in range(beam_size)]
@@ -224,12 +178,13 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
           input_eval = torch.tensor(beams[beam])
           input_eval = torch.unsqueeze(input_eval, 0)
           # ):
-          onnx_input = {"input_tokens": to_numpy(torch.unsqueeze(torch.Tensor(input_eval), 0))} #[int(i) for i in lista ]), 0))} #0  279
+          onnx_input = {"input_tokens": to_numpy(
+            torch.unsqueeze(torch.Tensor(input_eval), 0))}  # [int(i) for i in lista ]), 0))} #0  279
           onnx_input['input_tokens'] = onnx_input['input_tokens'][0]
-                                                   
+
           predictions = generative_model.run(None, onnx_input)[0]
           predictions = torch.tensor(predictions)
-          
+
           predictions = torch.squeeze(predictions, 0).cpu().detach().numpy()
           if predictions.shape[0] > 1:
             predictions = predictions[-1, :]
@@ -265,10 +220,11 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
                               "attention_mask": torch.unsqueeze(torch.tensor(attention_mask), 0)}
 
       classification_input = {"input_tokens": to_numpy(torch.unsqueeze(torch.tensor(ids), 0)),
-                              "attention_mask": to_numpy(torch.unsqueeze(torch.tensor(attention_mask), 0))} #[0]
+                              "attention_mask": to_numpy(torch.unsqueeze(torch.tensor(attention_mask), 0))}  # [0]
 
-      classification_output = F.softmax(torch.tensor(classifier.run(None, classification_input)[0])).detach().cpu().numpy()#[0]
-      
+      classification_output = F.softmax(
+        torch.tensor(classifier.run(None, classification_input)[0])).detach().cpu().numpy()  # [0]
+
       stacked_classifications.append(classification_output[0])
 
     stacked_classifications = np.array(stacked_classifications)
@@ -278,4 +234,50 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
     k = np.argmax(stacked_classifications[:, sentiment], axis=0)
     start_seq = beams[k]
 
-  return start_seq    
+  return start_seq
+
+
+
+def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq=[2], sentiment = 1):
+  #GENERATIVE_MODEL
+  model, model_path = download_metadata(model_to_download)     #, tokenizer, tokenizer_path
+  ort_session = onnxruntime.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
+  # output_seq = torch.tensor(start_seq)
+  #CLASSIFIER
+  classifier, classifier_path = download_metadata(classifier_to_download)     #, tokenizer, tokenizer_path
+
+  clas_session = onnxruntime.InferenceSession(classifier_path, providers=['CUDAExecutionProvider'])
+  #output_seq = torch.tensor(start_seq)
+  # output_seq = Tokenizer.generate_midi_from_txt(start_seq)#.encode(start_seq, return_tensors=True)
+  #TOKENIZER
+  pitch_range = range(21, 110)
+  beat_res = {(0, 4): 8, (4, 12): 4}
+  nb_velocities = 32
+  additional_tokens = {'Chord': True, 'Rest': True, 'Tempo': True, 'Program': False, 'TimeSignature': False,
+                       'Bar': False,
+                       'rest_range': (2, 8),  # (half, 8 beats)
+                       'nb_tempos': 32,
+                       'tempo_range': (30, 200)}  # (min, max)
+
+  remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens=True, mask=False)
+  char2idx = remi_tokenizer.vocab.event_to_token
+  idx2char = remi_tokenizer.vocab.token_to_event
+  #
+  # classification_model = MidiClassificationModule.load_from_checkpoint('test_clssifier/epoch=5-step=161-v1.ckpt')
+  #start_seq = generate_midi_with_sentiment(ort_session, char2idx, idx2char, 1,  "" , SEQ_LEN, [], 10)
+  output_sentence = generate_midi_with_sentiment(ort_session, clas_session, sentiment, idx2char, start_seq=start_seq,
+                               seq_len=SEQ_LEN, k=3, sent_controllers=[], beam_size=10)
+
+  #output_sentence_midi = remi_tokenizer.tokens_to_midi([start_seq])
+
+  output_sentence = [output_sentence]#.tolist()
+  #print("output_seq", output_sentence)
+  output_midi = remi_tokenizer.tokens_to_midi(
+    output_sentence)  # , get_midi_programs(midi))  #self, tokens: List[int]    tokens: List[List[Union[int, List[int]]]]
+
+  #print("output_sentence", output_midi )
+  path = "non_sentiment.mid"
+  output_midi .dump(path)
+
+  return path  # output_sentence
+
