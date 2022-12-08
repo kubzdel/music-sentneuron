@@ -14,65 +14,14 @@ import numpy as np
 
 SEQ_LEN = 1024
 
-def encoding2midi(note_encoding, ts_duration=0.25):   #changed - take the new fun()
-  notes = []
 
-  velocity = 100
-  duration = "16th"
-  dots = 0
+@lru_cache
+def load_onnx_model(model_path):
+  return onnxruntime.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
 
-  ts = 0
-  for note in note_encoding.split(" "):
-    if len(note) == 0:
-      continue
-
-    elif note[0] == "w":
-      wait_count = int(note.split("_")[1])
-      ts += wait_count
-
-    elif note[0] == "n":
-      pitch = int(note.split("_")[1])
-      note = m21.note.Note(pitch)
-      note.duration = m21.duration.Duration(type=duration, dots=dots)
-      note.offset = ts * ts_duration
-      note.volume.velocity = velocity
-      notes.append(note)
-
-    elif note[0] == "d":
-      duration = note.split("_")[1]
-      dots = int(note.split("_")[2])
-
-    elif note[0] == "v":
-      velocity = int(note.split("_")[1])
-
-    elif note[0] == "t":
-      tempo = int(note.split("_")[1])
-
-      if tempo > 0:
-        mark = m21.tempo.MetronomeMark(number=tempo)
-        mark.offset = ts * ts_duration
-        notes.append(mark)
-
-  piano = m21.instrument.fromString("Piano")
-  notes.insert(0, piano)
-
-  piano_stream = m21.stream.Stream(notes)
-  main_stream = m21.stream.Stream([piano_stream])
-
-  return m21.midi.translate.streamToMidiFile(main_stream)
-
-def write(encoded_midi, path):
-  # Base class checks if output path exists
-  midi = encoding2midi(encoded_midi)
-  midi.open(path, "wb")
-  midi.write()
-  midi.close()
 
 def to_numpy(tensor):
   return tensor.detach().numpy()
-
-
-
 
 @lru_cache
 def download_metadata(model_to_download):
@@ -83,16 +32,22 @@ def download_metadata(model_to_download):
                  secret_key=os.environ["AWS_SECRET_ACCESS_KEY"], secure=False)
   model_bucket_path = str(PurePosixPath('deployment', '{}'.format(model_to_download)))  # aws_path
 
-  model = client.fget_object(os.environ["AWS_BUCKET_NAME"], model_bucket_path, f"{model_to_download}")
+  if not os.path.exists("models"):
+    os.makedirs("models")
+
+  target_model_name = os.path.join("models", model_to_download)
+
+  if not os.path.isfile(target_model_name):
+    client.fget_object(os.environ["AWS_BUCKET_NAME"], model_bucket_path, f"{target_model_name}")
   # tokenizer
   # token_bucket_path = str(PurePosixPath('deployment', '{}'.format("char2idx.json")))
   # tokenizer_file = client.fget_object(os.environ["AWS_BUCKET_NAME"], token_bucket_path, "downloaded_tokenizer.json")
 
-  return model, f"{model_to_download}"#, tokenizer_file, "downloaded_tokenizer.json"
+  return f"{target_model_name}"#, tokenizer_file, "downloaded_tokenizer.json"
 
 def generate_midi_file(model_to_download):
   #wczytanie modelu z bucketa (potrzebny model i tokenizer (dane na buckecie)
-  model, model_path = download_metadata(model_to_download)    #, tokenizer, tokenizer_path
+  model_path = download_metadata(model_to_download)    #, tokenizer, tokenizer_path
 
   pitch_range = range(21, 110)
   beat_res = {(0, 4): 8, (4, 12): 4}
@@ -105,7 +60,7 @@ def generate_midi_file(model_to_download):
   remi_tokenizer = REMI(pitch_range, beat_res, nb_velocities, additional_tokens, sos_eos_tokens=True, mask=False)
 
   # wczytanie modelu
-  ort_session = onnxruntime.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
+  ort_session = load_onnx_model(model_path)
   midi_path = inference_model(ort_session, remi_tokenizer)
 
 
@@ -240,13 +195,13 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
 
 def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq=[2], sentiment = 1):
   #GENERATIVE_MODEL
-  model, model_path = download_metadata(model_to_download)     #, tokenizer, tokenizer_path
-  ort_session = onnxruntime.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
+  model_path = download_metadata(model_to_download)     #, tokenizer, tokenizer_path
+  ort_session = load_onnx_model(model_path)
   # output_seq = torch.tensor(start_seq)
   #CLASSIFIER
-  classifier, classifier_path = download_metadata(classifier_to_download)     #, tokenizer, tokenizer_path
+  classifier_path = download_metadata(classifier_to_download)     #, tokenizer, tokenizer_path
 
-  clas_session = onnxruntime.InferenceSession(classifier_path, providers=['CUDAExecutionProvider'])
+  clas_session = load_onnx_model(classifier_path)
   #output_seq = torch.tensor(start_seq)
   # output_seq = Tokenizer.generate_midi_from_txt(start_seq)#.encode(start_seq, return_tensors=True)
   #TOKENIZER
