@@ -1,11 +1,15 @@
 boto3==1.21.16
 uvicorn==0.17.6
 numpy==1.21.6
+cachetools==5.2.0
 fastapi==0.75.0
-onnxruntime==1.12.0
+onnxruntime-gpu==1.12.1
 python-dotenv==0.19.2
 minio==7.1.12
 transformers==4.25.1
 miditok==1.2.9
+python-multipart
 torch==1.12.0
+scipy==1.5.4
+matplotlib==3.5.3
 pydantic==1.9.0
