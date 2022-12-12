@@ -53,6 +53,9 @@ class MidiDto(BaseModel):
 
 @app.post('/generate')
 async def handle_file(generation_data: MidiDto):
+    sent_controllers = []
+    if (generation_data.tempo != ""):
+        sent_controllers.append(TempoController(mode=generation_data.tempo))
 
     if (generation_data.start_seq_file != None):
         start_seq_file = base64.b64decode(generation_data.start_seq_file)
@@ -60,9 +63,7 @@ async def handle_file(generation_data: MidiDto):
             file.write(start_seq_file)
         midi = MidiFile("temp.mid")
         tokens_start_seq = remi_tokenizer.midi_to_tokens(midi)[0]
-        sent_controllers = []
-        if(generation_data.tempo != ""):
-            sent_controllers.append(TempoController(mode = generation_data.tempo))
+
 
         if(generation_data.sent != -1):
             generated_file_path = generate_midi_with_sent(model_to_download, classifier_to_download,
