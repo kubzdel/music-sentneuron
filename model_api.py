@@ -1,5 +1,6 @@
 import base64
 import uvicorn
+from sentiment_controllers import SentimentController, TempoController
 from fastapi import File, FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -46,9 +47,8 @@ SEQ_LEN = 512
 class MidiDto(BaseModel):
   start_seq_file: bytes = None
   sent: int = -1
+  tempo: str = ""
 
-
-#tutaj daniel musiałby wysyłać puste argumenty jesli ich nie ma?
 
 
 @app.post('/generate')
@@ -60,16 +60,19 @@ async def handle_file(generation_data: MidiDto):
             file.write(start_seq_file)
         midi = MidiFile("temp.mid")
         tokens_start_seq = remi_tokenizer.midi_to_tokens(midi)[0]
+        sent_controllers = []
+        if(generation_data.tempo != ""):
+            sent_controllers.append(TempoController(mode = generation_data.tempo))
 
         if(generation_data.sent != -1):
             generated_file_path = generate_midi_with_sent(model_to_download, classifier_to_download,
-                                                   start_seq=tokens_start_seq, sentiment=generation_data.sent)
+                                                   start_seq=tokens_start_seq, sentiment=generation_data.sent, sent_controllers = sent_controllers)
         else: #if no sent
             generated_file_path = generate_midi_with_sent(model_to_download, classifier_to_download,
-                                                         start_seq=tokens_start_seq)
+                                                         start_seq=tokens_start_seq, sent_controllers = sent_controllers)
     else:   #no start_se, is sent
         if (generation_data.sent != -1):
-            generated_file_path = generate_midi_with_sent(model_to_download, classifier_to_download, sentiment=generation_data.sent)
+            generated_file_path = generate_midi_with_sent(model_to_download, classifier_to_download, sentiment=generation_data.sent, sent_controllers = sent_controllers)
         else:   #no start_seq, no sent
             generated_file_path = generate_midi_file(model_to_download)
     def iterfile():  #
@@ -88,5 +91,3 @@ if __name__ == "__main__":
 
     uvicorn.run("model_api:app", host="0.0.0.0", port=8091  # 8083
                 , reload=True)
-
-
