@@ -108,8 +108,8 @@ def inference_model(onnxsession, remi_tokenizer, start_seq=[2]):  #inference_mod
   return path #output_sentence
 
 
-def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2char, start_seq=[],
-                                 seq_len=256, k=3, sent_controllers=[], beam_size=10):
+def inner_generation_function(generative_model, classifier, sentiment, idx2char, start_seq,
+                                 seq_len=256, k=3, sent_controllers, beam_size=10):
   # Add front and end pad to the initial text
   # init_text = preprocess_sentence(init_text)
   # Empty midi to store our results
@@ -193,7 +193,7 @@ def generate_midi_with_sentiment(generative_model, classifier, sentiment, idx2ch
 
 
 
-def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq=[2], sentiment = 1):
+def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq=[2], sentiment = 1, sent_controllers=[]):
   #GENERATIVE_MODEL
   model_path = download_metadata(model_to_download)     #, tokenizer, tokenizer_path
   ort_session = load_onnx_model(model_path)
@@ -220,8 +220,8 @@ def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq
   #
   # classification_model = MidiClassificationModule.load_from_checkpoint('test_clssifier/epoch=5-step=161-v1.ckpt')
   #start_seq = generate_midi_with_sentiment(ort_session, char2idx, idx2char, 1,  "" , SEQ_LEN, [], 10)
-  output_sentence = generate_midi_with_sentiment(ort_session, clas_session, sentiment, idx2char, start_seq=start_seq,
-                               seq_len=SEQ_LEN, k=3, sent_controllers=[], beam_size=10)
+  output_sentence = inner_generation_function(ort_session, clas_session, sentiment, idx2char, start_seq=start_seq,
+                               seq_len=SEQ_LEN, k=3, sent_controllers=sent_controllers, beam_size=10)
 
   #output_sentence_midi = remi_tokenizer.tokens_to_midi([start_seq])
 
@@ -235,4 +235,3 @@ def generate_midi_with_sent(model_to_download, classifier_to_download, start_seq
   output_midi .dump(path)
 
   return path  # output_sentence
-
