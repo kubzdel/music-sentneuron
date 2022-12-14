@@ -1,7 +1,7 @@
 import base64
 import uvicorn
-from sentiment_controllers import SentimentController, TempoController
-from fastapi import File, FastAPI
+from sentiment_controllers import TempoController, PitchController
+from fastapi import FastAPI #, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from starlette.middleware import Middleware
@@ -48,6 +48,7 @@ class MidiDto(BaseModel):
   start_seq_file: bytes = None
   sent: int = -1
   tempo: str = ""
+  pitch: str = ""   #sounds_range
 
 
 
@@ -56,6 +57,9 @@ async def handle_file(generation_data: MidiDto):
     sent_controllers = []
     if (generation_data.tempo != ""):
         sent_controllers.append(TempoController(mode=generation_data.tempo))
+    if (generation_data.pitch != ""):
+        sent_controllers.append(PitchController(mode=generation_data.pitch))
+
 
     if (generation_data.start_seq_file != None):
         start_seq_file = base64.b64decode(generation_data.start_seq_file)
@@ -63,6 +67,7 @@ async def handle_file(generation_data: MidiDto):
             file.write(start_seq_file)
         midi = MidiFile("temp.mid")
         tokens_start_seq = remi_tokenizer.midi_to_tokens(midi)[0]
+        print(tokens_start_seq)
 
 
         if(generation_data.sent != -1):
@@ -79,7 +84,6 @@ async def handle_file(generation_data: MidiDto):
     def iterfile():  #
         with open(generated_file_path, mode="rb") as file_like:  #
             yield from file_like
-
     return StreamingResponse(iterfile(), media_type="audio/midi")
 
 
@@ -90,5 +94,5 @@ def change_model():
 
 if __name__ == "__main__":
 
-    uvicorn.run("model_api:app", host="0.0.0.0", port=8091  # 8083
+    uvicorn.run("model_api:app", host="0.0.0.0", port=8092  # 8083
                 , reload=True)
